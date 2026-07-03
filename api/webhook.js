@@ -14,8 +14,10 @@ export default async function handler(req, res) {
     console.log('TELEGRAM UPDATE RECEIVED:', JSON.stringify(req.body));
     // Process the incoming update from Telegram
     await bot.handleUpdate(req.body, res);
+    console.log('bot.handleUpdate finished processing.');
     // Ensure we don't hang if handleUpdate doesn't finish res
     if (!res.writableEnded) {
+      console.log('Forcefully closing response as handleUpdate did not end it.');
       res.status(200).end();
     }
   } catch (err) {

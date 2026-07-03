@@ -15,6 +15,8 @@ dotenv.config();
 
 if (!process.env.BOT_TOKEN) {
   console.error('Error: BOT_TOKEN is missing in the env configuration.');
+} else {
+  console.log('BOT_TOKEN is present. Initializing bot...');
 }
 
 const bot = new Telegraf(process.env.BOT_TOKEN || 'DUMMY_TOKEN');
@@ -196,12 +198,16 @@ function getPaginationKeyboard(siteKey, page, tag = '', queryId = '') {
 }
 
 bot.start((ctx) => {
+  console.log(`Bot start command received from chat ${ctx.chat.id}`);
   const welcomeText = `👋 *Welcome to the Desi Video Scraper Bot!*\n\n` +
     `Select a site from the menu below, click on one of the quick tags, or **type a custom search word** directly to search the sites and get results!`;
-  ctx.replyWithMarkdown(welcomeText, getMainMenu(ctx.chat.id)).catch(() => {});
+  ctx.replyWithMarkdown(welcomeText, getMainMenu(ctx.chat.id)).catch((err) => {
+    console.error(`Error in bot.start for chat ${ctx.chat.id}:`, err);
+  });
 });
 
 bot.help((ctx) => {
+  console.log(`Bot help command received from chat ${ctx.chat.id}`);
   const helpText = `📖 *Usage Instructions*:\n\n` +
     `1. Click on any site button to open the page selector.\n` +
     `2. Select a quick tag directly from the front menu.\n` +
@@ -209,7 +215,9 @@ bot.help((ctx) => {
     `4. Toggle the **Auto-Delete Timer** between Off, 15 Min, or 30 Min to automatically wipe media from the chat.\n` +
     `5. At the bottom of the last post, use pagination controls to scroll pages.\n\n` +
     `Use /start to open the main menu.`;
-  ctx.replyWithMarkdown(helpText, getMainMenu(ctx.chat.id)).catch(() => {});
+  ctx.replyWithMarkdown(helpText, getMainMenu(ctx.chat.id)).catch((err) => {
+    console.error(`Error in bot.help for chat ${ctx.chat.id}:`, err);
+  });
 });
 
 bot.action('help', async (ctx) => {
@@ -316,6 +324,7 @@ bot.action(/^tag_(.+)$/, async (ctx) => {
 
 // Handle text search queries from the user
 bot.on('text', async (ctx) => {
+  console.log(`Text message received from chat ${ctx.chat.id}: ${ctx.message.text}`);
   if (ctx.message.text.startsWith('/')) return;
 
   const text = ctx.message.text.trim();
@@ -482,6 +491,7 @@ async function handleScrapeAction(ctx, siteName, page, scrapeFn, tag = '', query
 
 // Register generic page scraper action handler
 bot.action(/^scrape_(.+)_(.+)$/, async (ctx) => {
+  console.log(`Action 'scrape' received from chat ${ctx.chat.id}: ${ctx.match[0]}`);
   const siteKey = ctx.match[1];
   const page = parseInt(ctx.match[2], 10);
   
