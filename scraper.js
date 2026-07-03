@@ -1,0 +1,557 @@
+import axios from 'axios';
+import * as cheerio from 'cheerio';
+
+const HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Cache-Control': 'no-cache',
+  'Pragma': 'no-cache'
+};
+
+const cache = {};
+const CACHE_TTL = 60 * 60 * 1000; // 1 hour cache duration
+
+function getCached(key) {
+  const entry = cache[key];
+  if (entry && Date.now() - entry.timestamp < CACHE_TTL) {
+    return entry.data;
+  }
+  return null;
+}
+
+function setCached(key, data) {
+  cache[key] = {
+    timestamp: Date.now(),
+    data
+  };
+}
+
+// helper to clean and normalize URLs
+function normalizeUrl(url, base) {
+  if (!url) return null;
+  let normalized = url;
+  if (url.startsWith('//')) normalized = `https:${url}`;
+  else if (url.startsWith('/')) normalized = `${base}${url}`;
+  
+  if (normalized.includes('downloaddirect.xyz/embed/')) {
+    const uuid = normalized.split('/embed/')[1];
+    if (uuid) {
+      const cleanUuid = uuid.split(/[?#]/)[0];
+      return `https://video.downloaddirect.xyz/${cleanUuid}.mp4`;
+    }
+  }
+  return normalized;
+}
+
+/**
+ * Scrapes Kamaclips.com
+ */
+async function scrapeKamaClips(page = 1, searchTerm = '') {
+  const cacheKey = `kamaclips_${page}_${searchTerm || 'default'}`;
+  const cached = getCached(cacheKey);
+  if (cached) return cached;
+
+  const baseUrl = 'https://kamaclips.com';
+  let url = '';
+  if (searchTerm) {
+    url = page === 1 
+      ? `${baseUrl}/?s=${encodeURIComponent(searchTerm)}` 
+      : `${baseUrl}/page/${page}/?s=${encodeURIComponent(searchTerm)}`;
+  } else {
+    url = page === 1 ? baseUrl : `${baseUrl}/page/${page}/`;
+  }
+
+  try {
+    const res = await axios.get(url, { headers: HEADERS, timeout: 10000 });
+    const $ = cheerio.load(res.data);
+    const posts = [];
+
+    $('.video-loop .video-block').each((_, el) => {
+      const title = $(el).find('a.infos').attr('title') || $(el).find('.title').text().trim();
+      const href = $(el).find('a.infos').attr('href') || $(el).find('a.thumb').attr('href');
+      const imgSrc = $(el).find('img.video-img').attr('data-src') || $(el).find('img.video-img').attr('src');
+
+      if (title && href) {
+        posts.push({
+          title,
+          url: normalizeUrl(href, baseUrl),
+          thumbnail: normalizeUrl(imgSrc, baseUrl)
+        });
+      }
+    });
+
+    // Remove duplicates and limit to 10
+    const uniquePosts = [];
+    const urls = new Set();
+    for (const post of posts) {
+      if (!urls.has(post.url)) {
+        urls.add(post.url);
+        uniquePosts.push(post);
+      }
+      if (uniquePosts.length >= 10) break;
+    }
+
+    // Resolve direct URLs in parallel
+    const resolvedPosts = await Promise.all(
+      uniquePosts.map(async (post) => {
+        try {
+          const postRes = await axios.get(post.url, { headers: HEADERS, timeout: 10000 });
+          const post$ = cheerio.load(postRes.data);
+
+          // 1. Try itemprop="contentURL"
+          let videoUrl = post$('meta[itemprop="contentURL"]').attr('content');
+
+          // 2. Try iframe player-x.php?q= base64
+          if (!videoUrl) {
+            const iframeSrc = post$('iframe[src*="player-x.php"]').attr('src');
+            if (iframeSrc) {
+              const urlObj = new URL(iframeSrc);
+              const q = urlObj.searchParams.get('q');
+              if (q) {
+                const decoded = Buffer.from(q, 'base64').toString('utf8');
+                const match = decoded.match(/src=["'](https?:\/\/[^"']+)["']/);
+                if (match) videoUrl = match[1];
+              }
+            }
+          }
+
+          // 3. Try standard source src
+          if (!videoUrl) {
+            videoUrl = post$('video source').attr('src');
+          }
+
+          post.videoUrl = normalizeUrl(videoUrl, baseUrl);
+          return post;
+        } catch (err) {
+          console.error(`Error resolving KamaClips post ${post.url}:`, err.message);
+          return post;
+        }
+      })
+    );
+
+    const validPosts = resolvedPosts.filter(p => p.videoUrl);
+    setCached(cacheKey, validPosts);
+    return validPosts;
+  } catch (err) {
+    console.error(`Error scraping KamaClips (Page ${page}, Search: ${searchTerm}):`, err.message);
+    return [];
+  }
+}
+
+/**
+ * Scrapes Viralmms.com
+ */
+async function scrapeViralMms(page = 1) {
+  const cacheKey = `viralmms_${page}`;
+  const cached = getCached(cacheKey);
+  if (cached) return cached;
+
+  const baseUrl = 'https://viralmms.com';
+  const url = page === 1 ? baseUrl : `${baseUrl}/page/${page}`;
+  try {
+    const res = await axios.get(url, { headers: HEADERS, timeout: 10000 });
+    const $ = cheerio.load(res.data);
+    const posts = [];
+
+    // Parse next-js JSON-LD schema
+    $('script[type="application/ld+json"]').each((_, el) => {
+      try {
+        const data = JSON.parse($(el).text());
+        const graph = data['@graph'] || (Array.isArray(data) ? data : [data]);
+        for (const node of graph) {
+          if ((node['@type'] === 'ItemList' || node['@type'] === 'CollectionPage') && node.itemListElement) {
+            for (const itemElement of node.itemListElement) {
+              const item = itemElement.item;
+              if (item && item['@type'] === 'VideoObject') {
+                posts.push({
+                  title: item.name,
+                  url: normalizeUrl(item.url, baseUrl),
+                  videoUrl: normalizeUrl(item.contentUrl, baseUrl),
+                  thumbnail: normalizeUrl(item.thumbnailUrl, baseUrl)
+                });
+              }
+            }
+          }
+        }
+      } catch (e) {}
+    });
+
+    // Fallback if LD+JSON parsing failed
+    if (posts.length === 0) {
+      const pagePosts = [];
+      $('a[href^="/post/"]').each((_, el) => {
+        const title = $(el).find('p').text().trim() || $(el).text().trim();
+        const href = $(el).attr('href');
+        if (title && href) {
+          pagePosts.push({
+            title,
+            url: normalizeUrl(href, baseUrl)
+          });
+        }
+      });
+
+      const uniquePosts = [];
+      const urls = new Set();
+      for (const p of pagePosts) {
+        if (!urls.has(p.url)) {
+          urls.add(p.url);
+          uniquePosts.push(p);
+        }
+        if (uniquePosts.length >= 10) break;
+      }
+
+      const resolved = await Promise.all(
+        uniquePosts.map(async (post) => {
+          try {
+            const postRes = await axios.get(post.url, { headers: HEADERS, timeout: 10000 });
+            const post$ = cheerio.load(postRes.data);
+            let videoUrl = null;
+            let thumbnail = null;
+
+            post$('script[type="application/ld+json"]').each((_, el) => {
+              try {
+                const data = JSON.parse(post$(el).text());
+                const graph = data['@graph'] || (Array.isArray(data) ? data : [data]);
+                for (const node of graph) {
+                  if (node['@type'] === 'VideoObject') {
+                    videoUrl = node.contentUrl;
+                    thumbnail = node.thumbnailUrl;
+                  }
+                }
+              } catch (e) {}
+            });
+
+            if (!videoUrl) {
+              const embedIframe = post$('iframe[src*="downloaddirect.xyz/embed"]').attr('src');
+              if (embedIframe) videoUrl = embedIframe;
+            }
+
+            post.videoUrl = normalizeUrl(videoUrl, baseUrl);
+            post.thumbnail = normalizeUrl(thumbnail || post$('meta[property="og:image"]').attr('content'), baseUrl);
+            return post;
+          } catch (err) {
+            return post;
+          }
+        })
+      );
+
+      const validPosts = resolved.filter(p => p.videoUrl);
+      setCached(cacheKey, validPosts);
+      return validPosts;
+    }
+
+    const limitedPosts = posts.slice(0, 10);
+    setCached(cacheKey, limitedPosts);
+    return limitedPosts;
+  } catch (err) {
+    console.error(`Error scraping ViralMms (Page ${page}):`, err.message);
+    return [];
+  }
+}
+
+/**
+ * Scrapes Desisexvdo.com
+ */
+async function scrapeDesiSexVdo(page = 1, searchTerm = '') {
+  const cacheKey = `desisexvdo_${page}_${searchTerm || 'default'}`;
+  const cached = getCached(cacheKey);
+  if (cached) return cached;
+
+  const baseUrl = 'https://desisexvdo.com';
+  let url = '';
+  if (searchTerm) {
+    url = page === 1 
+      ? `${baseUrl}/?s=${encodeURIComponent(searchTerm)}` 
+      : `${baseUrl}/page/${page}/?s=${encodeURIComponent(searchTerm)}`;
+  } else {
+    url = page === 1 ? `${baseUrl}/?filter=popular` : `${baseUrl}/page/${page}/?filter=popular`;
+  }
+
+  try {
+    const res = await axios.get(url, { headers: HEADERS, timeout: 10000 });
+    const $ = cheerio.load(res.data);
+    const posts = [];
+
+    $('.video-loop .video-block').each((_, el) => {
+      const title = $(el).find('a.infos').attr('title') || $(el).find('.title').text().trim();
+      const href = $(el).find('a.infos').attr('href') || $(el).find('a.thumb').attr('href');
+      const imgSrc = $(el).find('img.video-img').attr('data-src') || $(el).find('img.video-img').attr('src');
+
+      if (title && href) {
+        posts.push({
+          title,
+          url: normalizeUrl(href, baseUrl),
+          thumbnail: normalizeUrl(imgSrc, baseUrl)
+        });
+      }
+    });
+
+    const uniquePosts = [];
+    const urls = new Set();
+    for (const post of posts) {
+      if (!urls.has(post.url)) {
+        urls.add(post.url);
+        uniquePosts.push(post);
+      }
+      if (uniquePosts.length >= 10) break;
+    }
+
+    const resolvedPosts = await Promise.all(
+      uniquePosts.map(async (post) => {
+        try {
+          const postRes = await axios.get(post.url, { headers: HEADERS, timeout: 10000 });
+          const post$ = cheerio.load(postRes.data);
+          let videoUrl = null;
+          let thumbnail = null;
+
+          post$('script[type="application/ld+json"]').each((_, el) => {
+            try {
+              const data = JSON.parse(post$(el).text());
+              const graph = data['@graph'] || (Array.isArray(data) ? data : [data]);
+              for (const node of graph) {
+                if (node['@type'] === 'VideoObject') {
+                  videoUrl = node.contentUrl;
+                  thumbnail = node.thumbnailUrl;
+                }
+              }
+            } catch (e) {}
+          });
+
+          if (!videoUrl) {
+            videoUrl = post$('video source').attr('src');
+          }
+          if (!thumbnail) {
+            thumbnail = post$('video').attr('poster') || post$('meta[property="og:image"]').attr('content');
+          }
+
+          post.videoUrl = normalizeUrl(videoUrl, baseUrl);
+          if (thumbnail) {
+            post.thumbnail = normalizeUrl(thumbnail, baseUrl);
+          }
+          return post;
+        } catch (err) {
+          return post;
+        }
+      })
+    );
+
+    const validPosts = resolvedPosts.filter(p => p.videoUrl);
+    setCached(cacheKey, validPosts);
+    return validPosts;
+  } catch (err) {
+    console.error(`Error scraping DesiSexVdo (Page ${page}, Search: ${searchTerm}):`, err.message);
+    return [];
+  }
+}
+
+/**
+ * Scrapes Desibabe.tv
+ */
+async function scrapeDesiBabe(page = 1) {
+  const cacheKey = `desibabe_${page}`;
+  const cached = getCached(cacheKey);
+  if (cached) return cached;
+
+  const baseUrl = 'https://desibabe.tv';
+  const url = page === 1 ? baseUrl : `${baseUrl}/page/${page}`;
+  try {
+    const res = await axios.get(url, { headers: HEADERS, timeout: 10000 });
+    const $ = cheerio.load(res.data);
+    const posts = [];
+
+    $('script[type="application/ld+json"]').each((_, el) => {
+      try {
+        const data = JSON.parse($(el).text());
+        const graph = data['@graph'] || (Array.isArray(data) ? data : [data]);
+        for (const node of graph) {
+          if ((node['@type'] === 'CollectionPage' || node['@type'] === 'WebPage') && node.mainEntity && node.mainEntity.itemListElement) {
+            for (const item of node.mainEntity.itemListElement) {
+              if (item.url && item.name) {
+                posts.push({
+                  title: item.name,
+                  url: normalizeUrl(item.url, baseUrl)
+                });
+              }
+            }
+          }
+        }
+      } catch (e) {}
+    });
+
+    // Fallback parser if JSON-LD is missing
+    if (posts.length === 0) {
+      $('a[href^="/post/"]').each((_, el) => {
+        const title = $(el).find('h3').text().trim() || $(el).attr('title') || $(el).text().trim();
+        const href = $(el).attr('href');
+        if (title && href) {
+          posts.push({
+            title,
+            url: normalizeUrl(href, baseUrl)
+          });
+        }
+      });
+    }
+
+    const uniquePosts = [];
+    const urls = new Set();
+    for (const post of posts) {
+      if (!urls.has(post.url)) {
+        urls.add(post.url);
+        uniquePosts.push(post);
+      }
+      if (uniquePosts.length >= 10) break;
+    }
+
+    const resolvedPosts = await Promise.all(
+      uniquePosts.map(async (post) => {
+        try {
+          const postRes = await axios.get(post.url, { headers: HEADERS, timeout: 10000 });
+          const post$ = cheerio.load(postRes.data);
+          let videoUrl = null;
+          let thumbnail = null;
+
+          post$('script[type="application/ld+json"]').each((_, el) => {
+            try {
+              const data = JSON.parse(post$(el).text());
+              const graph = data['@graph'] || (Array.isArray(data) ? data : [data]);
+              for (const node of graph) {
+                if (node['@type'] === 'VideoObject') {
+                  videoUrl = node.contentUrl;
+                  thumbnail = node.thumbnailUrl;
+                }
+              }
+            } catch (e) {}
+          });
+
+          if (!videoUrl) {
+            const embedIframe = post$('iframe[src*="downloaddirect.xyz/embed"]').attr('src');
+            if (embedIframe) videoUrl = embedIframe;
+          }
+
+          post.videoUrl = normalizeUrl(videoUrl, baseUrl);
+          post.thumbnail = normalizeUrl(thumbnail || post$('meta[property="og:image"]').attr('content'), baseUrl);
+          return post;
+        } catch (err) {
+          return post;
+        }
+      })
+    );
+
+    const validPosts = resolvedPosts.filter(p => p.videoUrl);
+    setCached(cacheKey, validPosts);
+    return validPosts;
+  } catch (err) {
+    console.error(`Error scraping DesiBabe (Page ${page}):`, err.message);
+    return [];
+  }
+}
+
+/**
+ * Scrapes Desihub.org
+ */
+async function scrapeDesiHub(page = 1) {
+  const cacheKey = `desihub_${page}`;
+  const cached = getCached(cacheKey);
+  if (cached) return cached;
+
+  const baseUrl = 'https://desihub.org';
+  const url = page === 1 ? baseUrl : `${baseUrl}/page/${page}`;
+  try {
+    const res = await axios.get(url, { headers: HEADERS, timeout: 10000 });
+    const $ = cheerio.load(res.data);
+    const posts = [];
+
+    $('script[type="application/ld+json"]').each((_, el) => {
+      try {
+        const data = JSON.parse($(el).text());
+        const graph = data['@graph'] || (Array.isArray(data) ? data : [data]);
+        for (const node of graph) {
+          if ((node['@type'] === 'CollectionPage' || node['@type'] === 'WebPage') && node.mainEntity && node.mainEntity.itemListElement) {
+            for (const item of node.mainEntity.itemListElement) {
+              if (item.url && item.name) {
+                posts.push({
+                  title: item.name,
+                  url: normalizeUrl(item.url, baseUrl)
+                });
+              }
+            }
+          }
+        }
+      } catch (e) {}
+    });
+
+    if (posts.length === 0) {
+      $('a[href^="/post/"]').each((_, el) => {
+        const title = $(el).find('h3').text().trim() || $(el).attr('title') || $(el).text().trim();
+        const href = $(el).attr('href');
+        if (title && href) {
+          posts.push({
+            title,
+            url: normalizeUrl(href, baseUrl)
+          });
+        }
+      });
+    }
+
+    const uniquePosts = [];
+    const urls = new Set();
+    for (const post of posts) {
+      if (!urls.has(post.url)) {
+        urls.add(post.url);
+        uniquePosts.push(post);
+      }
+      if (uniquePosts.length >= 10) break;
+    }
+
+    const resolvedPosts = await Promise.all(
+      uniquePosts.map(async (post) => {
+        try {
+          const postRes = await axios.get(post.url, { headers: HEADERS, timeout: 10000 });
+          const post$ = cheerio.load(postRes.data);
+          let videoUrl = null;
+          let thumbnail = null;
+
+          post$('script[type="application/ld+json"]').each((_, el) => {
+            try {
+              const data = JSON.parse(post$(el).text());
+              const graph = data['@graph'] || (Array.isArray(data) ? data : [data]);
+              for (const node of graph) {
+                if (node['@type'] === 'VideoObject') {
+                  videoUrl = node.contentUrl;
+                  thumbnail = node.thumbnailUrl;
+                }
+              }
+            } catch (e) {}
+          });
+
+          if (!videoUrl) {
+            const embedIframe = post$('iframe[src*="downloaddirect.xyz/embed"]').attr('src');
+            if (embedIframe) videoUrl = embedIframe;
+          }
+
+          post.videoUrl = normalizeUrl(videoUrl, baseUrl);
+          post.thumbnail = normalizeUrl(thumbnail || post$('meta[property="og:image"]').attr('content'), baseUrl);
+          return post;
+        } catch (err) {
+          return post;
+        }
+      })
+    );
+
+    const validPosts = resolvedPosts.filter(p => p.videoUrl);
+    setCached(cacheKey, validPosts);
+    return validPosts;
+  } catch (err) {
+    console.error(`Error scraping DesiHub (Page ${page}):`, err.message);
+    return [];
+  }
+}
+
+export {
+  scrapeKamaClips,
+  scrapeViralMms,
+  scrapeDesiSexVdo,
+  scrapeDesiBabe,
+  scrapeDesiHub
+};

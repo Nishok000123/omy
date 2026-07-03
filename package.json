@@ -1,0 +1,17 @@
+{
+  "name": "telegram-scraper-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot to scrape trending/latest posts with direct URLs",
+  "main": "bot.js",
+  "type": "module",
+  "scripts": {
+    "start": "node bot.js",
+    "test": "node test-scraper.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "cheerio": "^1.0.0",
+    "dotenv": "^16.4.5",
+    "telegraf": "^4.16.3"
+  }
+}
