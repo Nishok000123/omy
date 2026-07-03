@@ -161,18 +161,15 @@ async function sendPageSelector(ctx, siteName, siteKey) {
 // Builds inline keyboard controls for pagination under the last post of a batch
 function getPaginationKeyboard(siteKey, page, tag = '', queryId = '') {
   let cleanSiteKey = siteKey.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/_$/, '');
-  if (cleanSiteKey === 'all_sites') {
-    cleanSiteKey = 'all';
-  }
   let prefix = `scrape_${cleanSiteKey}`;
-  
+
   if (queryId) {
     prefix = `csearch_${cleanSiteKey}_${queryId}`;
   } else if (tag) {
     const tagKey = Object.keys(TAG_LABELS).find(k => TAG_LABELS[k].toLowerCase() === tag.toLowerCase()) || tag.toLowerCase().replace(/\s+/g, '_');
     prefix = `search_${cleanSiteKey}_${tagKey}`;
   }
-  
+
   const buttons = [];
 
   // Navigation row
@@ -242,7 +239,7 @@ bot.action('back_to_main', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   const welcomeText = `👋 *Welcome to the Desi Video Scraper Bot!*\n\n` +
     `Select a site from the menu below, click on one of the quick tags, or **type a custom search word** directly to search the sites and get results!`;
-  
+
   if (ctx.callbackQuery && ctx.callbackQuery.message && ctx.callbackQuery.message.photo) {
     try {
       await ctx.editMessageReplyMarkup(null);
@@ -369,26 +366,26 @@ bot.on('text', async (ctx) => {
 async function handleScrapeAction(ctx, siteName, page, scrapeFn, tag = '', queryId = '') {
   const actionLabel = tag ? `Search "${tag}" (Page ${page})` : `Page ${page}`;
   await ctx.answerCbQuery(`Scraping ${actionLabel} of ${siteName}...`).catch(() => {});
-  
+
   if (ctx.callbackQuery) {
     try {
       await ctx.editMessageReplyMarkup(null);
     } catch (e) {}
   }
-  
+
   const statusMsg = await ctx.replyWithMarkdown(`🔍 _Fetching ${actionLabel.toLowerCase()} from *${siteName}*..._`).catch(() => {});
 
   try {
     const posts = tag ? await scrapeFn(page, tag) : await scrapeFn(page);
-    
+
     if (!posts || posts.length === 0) {
       if (statusMsg) {
         try {
           await ctx.telegram.deleteMessage(ctx.chat.id, statusMsg.message_id);
         } catch (e) {}
       }
-      
-      const failText = tag 
+
+      const failText = tag
         ? `❌ No posts found for *"${tag}"* on *Page ${page}* of *${siteName}*.`
         : `❌ No posts found on *Page ${page}* of *${siteName}*.`;
 
@@ -417,20 +414,16 @@ async function handleScrapeAction(ctx, siteName, page, scrapeFn, tag = '', query
         `📥 *Direct Video URL* (tap to copy):\n` +
         `\`${post.videoUrl}\``;
 
-      const inlineKeyboard = Markup.inlineKeyboard([
-        [Markup.button.url('🎬 Watch Direct Video', post.videoUrl)]
-      ]);
-
       try {
         let msg = null;
         if (post.thumbnail) {
-          msg = await ctx.replyWithPhoto(post.thumbnail, { caption, parse_mode: 'Markdown', ...inlineKeyboard }).catch(() => {});
+          msg = await ctx.replyWithPhoto(post.thumbnail, { caption, parse_mode: 'Markdown' }).catch(() => {});
         } else {
-          msg = await ctx.replyWithMarkdown(caption, inlineKeyboard).catch(() => {});
+          msg = await ctx.replyWithMarkdown(caption).catch(() => {});
         }
         if (msg) sentMessageIds.push(msg.message_id);
       } catch (err) {
-        const msg = await ctx.replyWithMarkdown(caption, inlineKeyboard).catch(() => {});
+        const msg = await ctx.replyWithMarkdown(caption).catch(() => {});
         if (msg) sentMessageIds.push(msg.message_id);
       }
     }
@@ -449,25 +442,20 @@ async function handleScrapeAction(ctx, siteName, page, scrapeFn, tag = '', query
     const siteKey = siteName.toLowerCase();
     const paginationKeyboard = getPaginationKeyboard(siteKey, page, tag, queryId);
 
-    const lastPostKeyboard = Markup.inlineKeyboard([
-      [Markup.button.url('🎬 Watch Direct Video', lastPost.videoUrl)],
-      ...(paginationKeyboard.reply_markup ? paginationKeyboard.reply_markup.inline_keyboard : [])
-    ]);
-
     try {
       let msgLast = null;
       if (lastPost.thumbnail) {
         msgLast = await ctx.replyWithPhoto(lastPost.thumbnail, {
           caption: lastCaption,
           parse_mode: 'Markdown',
-          ...lastPostKeyboard
+          ...paginationKeyboard
         }).catch(() => {});
       } else {
-        msgLast = await ctx.replyWithMarkdown(lastCaption, lastPostKeyboard).catch(() => {});
+        msgLast = await ctx.replyWithMarkdown(lastCaption, paginationKeyboard).catch(() => {});
       }
       if (msgLast) sentMessageIds.push(msgLast.message_id);
     } catch (err) {
-      const msgLast = await ctx.replyWithMarkdown(lastCaption, lastPostKeyboard).catch(() => {});
+      const msgLast = await ctx.replyWithMarkdown(lastCaption, paginationKeyboard).catch(() => {});
       if (msgLast) sentMessageIds.push(msgLast.message_id);
     }
 
@@ -506,7 +494,7 @@ bot.action(/^scrape_(.+)_(.+)$/, async (ctx) => {
   console.log(`Action 'scrape' received from chat ${ctx.chat.id}: ${ctx.match[0]}`);
   const siteKey = ctx.match[1];
   const page = parseInt(ctx.match[2], 10);
-  
+
   let siteName = '';
   let scrapeFn = null;
 
@@ -550,7 +538,7 @@ bot.action(/^scrape_(.+)_(.+)$/, async (ctx) => {
 });
 
 // Register generic tag search handler
-bot.action(/^search_(all|kamaclips|desisexvdo|desibf|desileak49|mastiraja)_(.+)_(\d+)$/, async (ctx) => {
+bot.action(/^search_(.+)_(.+)_(.+)$/, async (ctx) => {
   const siteKey = ctx.match[1];
   const tagKey = ctx.match[2];
   const page = parseInt(ctx.match[3], 10);
@@ -588,7 +576,7 @@ bot.action(/^search_(all|kamaclips|desisexvdo|desibf|desileak49|mastiraja)_(.+)_
 });
 
 // Register custom search callback query triggers
-bot.action(/^csearch_(all|kamaclips|desisexvdo|desibf|desileak49|mastiraja)_(.+)_(\d+)$/, async (ctx) => {
+bot.action(/^csearch_(.+)_(.+)_(.+)$/, async (ctx) => {
   const siteKey = ctx.match[1];
   const queryId = ctx.match[2];
   const page = parseInt(ctx.match[3], 10);
