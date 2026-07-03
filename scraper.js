@@ -76,7 +76,8 @@ async function scrapeKamaClips(page = 1, searchTerm = '') {
         posts.push({
           title,
           url: normalizeUrl(href, baseUrl),
-          thumbnail: normalizeUrl(imgSrc, baseUrl)
+          thumbnail: normalizeUrl(imgSrc, baseUrl),
+          siteName: 'KamaClips'
         });
       }
     });
@@ -160,7 +161,8 @@ async function scrapeViralMms(page = 1) {
                   title: item.name,
                   url: normalizeUrl(item.url, baseUrl),
                   videoUrl: normalizeUrl(item.contentUrl, baseUrl),
-                  thumbnail: normalizeUrl(item.thumbnailUrl, baseUrl)
+                  thumbnail: normalizeUrl(item.thumbnailUrl, baseUrl),
+                  siteName: 'ViralMMS'
                 });
               }
             }
@@ -177,7 +179,8 @@ async function scrapeViralMms(page = 1) {
         if (title && href) {
           pagePosts.push({
             title,
-            url: normalizeUrl(href, baseUrl)
+            url: normalizeUrl(href, baseUrl),
+            siteName: 'ViralMMS'
           });
         }
       });
@@ -273,7 +276,8 @@ async function scrapeDesiSexVdo(page = 1, searchTerm = '') {
         posts.push({
           title,
           url: normalizeUrl(href, baseUrl),
-          thumbnail: normalizeUrl(imgSrc, baseUrl)
+          thumbnail: normalizeUrl(imgSrc, baseUrl),
+          siteName: 'DesiSexVdo'
         });
       }
     });
@@ -361,7 +365,8 @@ async function scrapeDesiBabe(page = 1) {
               if (item.url && item.name) {
                 posts.push({
                   title: item.name,
-                  url: normalizeUrl(item.url, baseUrl)
+                  url: normalizeUrl(item.url, baseUrl),
+                  siteName: 'DesiBabe'
                 });
               }
             }
@@ -377,7 +382,8 @@ async function scrapeDesiBabe(page = 1) {
         if (title && href) {
           posts.push({
             title,
-            url: normalizeUrl(href, baseUrl)
+            url: normalizeUrl(href, baseUrl),
+            siteName: 'DesiBabe'
           });
         }
       });
@@ -462,7 +468,8 @@ async function scrapeDesiHub(page = 1) {
               if (item.url && item.name) {
                 posts.push({
                   title: item.name,
-                  url: normalizeUrl(item.url, baseUrl)
+                  url: normalizeUrl(item.url, baseUrl),
+                  siteName: 'DesiHub'
                 });
               }
             }
@@ -478,7 +485,8 @@ async function scrapeDesiHub(page = 1) {
         if (title && href) {
           posts.push({
             title,
-            url: normalizeUrl(href, baseUrl)
+            url: normalizeUrl(href, baseUrl),
+            siteName: 'DesiHub'
           });
         }
       });
@@ -570,7 +578,8 @@ async function scrapeDesiBF(page = 1, searchTerm = '') {
         posts.push({
           title,
           url: normalizeUrl(href, baseUrl),
-          thumbnail: normalizeUrl(imgSrc, baseUrl)
+          thumbnail: normalizeUrl(imgSrc, baseUrl),
+          siteName: 'DesiBF'
         });
       }
     });
@@ -659,7 +668,8 @@ async function scrapeDesiLeak49(page = 1, searchTerm = '') {
               if (item.url && item.name) {
                 posts.push({
                   title: item.name,
-                  url: normalizeUrl(item.url, baseUrl)
+                  url: normalizeUrl(item.url, baseUrl),
+                  siteName: 'DesiLeak49'
                 });
               }
             }
@@ -675,7 +685,8 @@ async function scrapeDesiLeak49(page = 1, searchTerm = '') {
         if (title && href) {
           posts.push({
             title,
-            url: normalizeUrl(href, baseUrl)
+            url: normalizeUrl(href, baseUrl),
+            siteName: 'DesiLeak49'
           });
         }
       });
@@ -753,7 +764,8 @@ async function scrapeMastiRaja(page = 1, searchTerm = '') {
         posts.push({
           title,
           url: normalizeUrl(href, baseUrl),
-          thumbnail: normalizeUrl(imgSrc, baseUrl)
+          thumbnail: normalizeUrl(imgSrc, baseUrl),
+          siteName: 'MastiRaja'
         });
       }
     });

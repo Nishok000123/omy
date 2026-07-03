@@ -53,6 +53,55 @@ function scheduleDeletion(ctx, messageIds, minutes) {
   }, minutes * 60 * 1000);
 }
 
+// Consolidated AIO Scraper (shuffles/combines posts from all 8 sites)
+async function scrapeAIO(page = 1, filterType = 'latest') {
+  const results = await Promise.all([
+    scrapeKamaClips(page).catch(() => []),
+    scrapeViralMms(page).catch(() => []),
+    scrapeDesiSexVdo(page).catch(() => []),
+    scrapeDesiBabe(page).catch(() => []),
+    scrapeDesiHub(page).catch(() => []),
+    scrapeDesiBF(page).catch(() => []),
+    scrapeDesiLeak49(page).catch(() => []),
+    scrapeMastiRaja(page).catch(() => [])
+  ]);
+
+  const mergedPosts = [];
+  const maxPerSite = 2;
+  for (let i = 0; i < maxPerSite; i++) {
+    for (const siteResults of results) {
+      if (siteResults[i]) {
+        mergedPosts.push(siteResults[i]);
+      }
+    }
+  }
+
+  return mergedPosts.slice(0, 10);
+}
+
+// Consolidated AIO Tag/Text Search Scraper (combines search results from the 5 searchable sites)
+async function searchAllSites(page = 1, query = '') {
+  const results = await Promise.all([
+    scrapeKamaClips(page, query).catch(() => []),
+    scrapeDesiSexVdo(page, query).catch(() => []),
+    scrapeDesiBF(page, query).catch(() => []),
+    scrapeDesiLeak49(page, query).catch(() => []),
+    scrapeMastiRaja(page, query).catch(() => [])
+  ]);
+
+  const mergedPosts = [];
+  const maxPerSite = 2;
+  for (let i = 0; i < maxPerSite; i++) {
+    for (const siteResults of results) {
+      if (siteResults[i]) {
+        mergedPosts.push(siteResults[i]);
+      }
+    }
+  }
+
+  return mergedPosts.slice(0, 10);
+}
+
 // Generate the main menu dynamically based on chat settings
 function getMainMenu(chatId) {
   const settings = chatSettings[chatId] || { autoDeleteMinutes: 15 };
@@ -61,6 +110,12 @@ function getMainMenu(chatId) {
   else if (settings.autoDeleteMinutes === 30) deleteLabel = '⏳ Auto-Delete: 30 Min';
 
   return Markup.inlineKeyboard([
+    // Row 1: Unified All-in-One consolidated feeds!
+    [
+      Markup.button.callback('🔥 Trending (All-in-One)', 'scrape_trending_all_in_one_1'),
+      Markup.button.callback('🌟 Popular (All-in-One)', 'scrape_popular_all_in_one_1')
+    ],
+    // Rows 2 & 3: Individual Sites
     [Markup.button.callback('KamaClips 🔞', 'site_kamaclips'), Markup.button.callback('ViralMMS 🎬', 'site_viralmms')],
     [Markup.button.callback('DesiSexVdo 🎥', 'site_desisexvdo'), Markup.button.callback('DesiBabe 🍑', 'site_desibabe')],
     [Markup.button.callback('DesiHub 🇮🇳', 'site_desihub'), Markup.button.callback('DesiBF 💋', 'site_desibf')],
@@ -102,12 +157,14 @@ async function sendPageSelector(ctx, siteName, siteKey) {
 
 // Builds inline keyboard controls for pagination under the last post of a batch
 function getPaginationKeyboard(siteKey, page, tag = '', queryId = '') {
-  let prefix = `scrape_${siteKey}`;
+  let cleanSiteKey = siteKey.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/_$/, '');
+  let prefix = `scrape_${cleanSiteKey}`;
+  
   if (queryId) {
-    prefix = `csearch_${siteKey}_${queryId}`;
+    prefix = `csearch_${cleanSiteKey}_${queryId}`;
   } else if (tag) {
     const tagKey = Object.keys(TAG_LABELS).find(k => TAG_LABELS[k].toLowerCase() === tag.toLowerCase()) || tag.toLowerCase().replace(/\s+/g, '_');
-    prefix = `search_${siteKey}_${tagKey}`;
+    prefix = `search_${cleanSiteKey}_${tagKey}`;
   }
   
   const buttons = [];
@@ -228,6 +285,7 @@ bot.action(/^tag_(.+)$/, async (ctx) => {
 
   const text = `🔍 *Search Tag: ${tagLabel}*\n\nSelect which site you want to search for *"${tagLabel}"*:`;
   const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback('🔍 Combined Search (All Sites)', `search_all_${tagKey}_1`)],
     [
       Markup.button.callback('KamaClips 🔞', `search_kamaclips_${tagKey}_1`),
       Markup.button.callback('DesiSexVdo 🎥', `search_desisexvdo_${tagKey}_1`)
@@ -276,6 +334,7 @@ bot.on('text', async (ctx) => {
 
   const responseText = `🔍 *Search results for: "${text}"*\n\nSelect which site you want to search on:`;
   const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback('🔍 Combined Search (All Sites)', `csearch_all_${queryId}_1`)],
     [
       Markup.button.callback('KamaClips 🔞', `csearch_kamaclips_${queryId}_1`),
       Markup.button.callback('DesiSexVdo 🎥', `csearch_desisexvdo_${queryId}_1`)
@@ -338,6 +397,7 @@ async function handleScrapeAction(ctx, siteName, page, scrapeFn, tag = '', query
     for (let i = 0; i < posts.length - 1; i++) {
       const post = posts[i];
       const caption = `🔥 *${i + 1}. ${post.title}*\n\n` +
+        `🌐 *Source*: ${post.siteName || siteName}\n` +
         `📄 *Page*: ${page}\n` +
         (tag ? `🏷️ *Tag/Search*: ${tag}\n` : '') +
         `🔗 [Original Post](${post.url})\n\n` +
@@ -362,6 +422,7 @@ async function handleScrapeAction(ctx, siteName, page, scrapeFn, tag = '', query
     const lastIndex = posts.length - 1;
     const lastPost = posts[lastIndex];
     const lastCaption = `🔥 *${lastIndex + 1}. ${lastPost.title}*\n\n` +
+      `🌐 *Source*: ${lastPost.siteName || siteName}\n` +
       `📄 *Page*: ${page}\n` +
       (tag ? `🏷️ *Tag/Search*: ${tag}\n` : '') +
       `🔗 [Original Post](${lastPost.url})\n\n` +
@@ -426,7 +487,13 @@ bot.action(/^scrape_(.+)_(.+)$/, async (ctx) => {
   let siteName = '';
   let scrapeFn = null;
 
-  if (siteKey === 'kamaclips') {
+  if (siteKey === 'trending_all_in_one') {
+    siteName = 'Trending (All-in-One)';
+    scrapeFn = (p) => scrapeAIO(p, 'trending');
+  } else if (siteKey === 'popular_all_in_one') {
+    siteName = 'Popular (All-in-One)';
+    scrapeFn = (p) => scrapeAIO(p, 'popular');
+  } else if (siteKey === 'kamaclips') {
     siteName = 'KamaClips';
     scrapeFn = scrapeKamaClips;
   } else if (siteKey === 'viralmms') {
@@ -468,7 +535,10 @@ bot.action(/^search_(.+)_(.+)_(.+)$/, async (ctx) => {
   let siteName = '';
   let scrapeFn = null;
 
-  if (siteKey === 'kamaclips') {
+  if (siteKey === 'all') {
+    siteName = 'All Sites';
+    scrapeFn = searchAllSites;
+  } else if (siteKey === 'kamaclips') {
     siteName = 'KamaClips';
     scrapeFn = scrapeKamaClips;
   } else if (siteKey === 'desisexvdo') {
@@ -509,7 +579,10 @@ bot.action(/^csearch_(.+)_(.+)_(.+)$/, async (ctx) => {
   let siteName = '';
   let scrapeFn = null;
 
-  if (siteKey === 'kamaclips') {
+  if (siteKey === 'all') {
+    siteName = 'All Sites';
+    scrapeFn = searchAllSites;
+  } else if (siteKey === 'kamaclips') {
     siteName = 'KamaClips';
     scrapeFn = scrapeKamaClips;
   } else if (siteKey === 'desisexvdo') {
