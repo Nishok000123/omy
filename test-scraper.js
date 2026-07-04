@@ -1,4 +1,6 @@
+import assert from 'assert';
 import {
+  normalizeUrl,
   scrapeKamaClips,
   scrapeViralMms,
   scrapeDesiSexVdo,
@@ -12,6 +14,59 @@ import {
   cache,
   CACHE_TTL
 } from './scraper.js';
+
+function runNormalizeUrlTests() {
+  console.log('\n--- Testing normalizeUrl ---');
+  const base = 'https://example.com';
+  let passed = 0;
+  let failed = 0;
+
+  const testCases = [
+    // Falsy inputs
+    { input: null, expected: null, desc: 'null input' },
+    { input: undefined, expected: null, desc: 'undefined input' },
+    { input: '', expected: null, desc: 'empty string input' },
+
+    // Normal URLs
+    { input: 'https://example.com/video.mp4', expected: 'https://example.com/video.mp4', desc: 'normal absolute URL' },
+
+    // Protocol-relative URLs
+    { input: '//example.com/video.mp4', expected: 'https://example.com/video.mp4', desc: 'protocol-relative URL' },
+
+    // Absolute path URLs
+    { input: '/video.mp4', expected: 'https://example.com/video.mp4', desc: 'absolute path URL' },
+
+    // downloaddirect.xyz edge cases
+    {
+      input: 'https://downloaddirect.xyz/embed/12345-uuid',
+      expected: 'https://video.downloaddirect.xyz/12345-uuid.mp4',
+      desc: 'downloaddirect.xyz extraction'
+    },
+    {
+      input: 'https://downloaddirect.xyz/embed/12345-uuid?query=1',
+      expected: 'https://video.downloaddirect.xyz/12345-uuid.mp4',
+      desc: 'downloaddirect.xyz extraction ignoring query string'
+    },
+    {
+      input: 'https://downloaddirect.xyz/embed/12345-uuid#hash',
+      expected: 'https://video.downloaddirect.xyz/12345-uuid.mp4',
+      desc: 'downloaddirect.xyz extraction ignoring hash fragment'
+    }
+  ];
+
+  for (const { input, expected, desc } of testCases) {
+    try {
+      assert.strictEqual(normalizeUrl(input, base), expected);
+      passed++;
+    } catch (err) {
+      console.error(`❌ Failed: ${desc}\n   Expected: ${expected}\n   Actual:   ${err.actual}`);
+      failed++;
+    }
+  }
+
+  console.log(`normalizeUrl tests: ${passed} passed, ${failed} failed`);
+  if (failed > 0) process.exit(1);
+}
 
 async function testScraper(name, fn, ...args) {
   console.log(`\nTesting ${name}...`);
@@ -64,7 +119,7 @@ function testCacheExpiry() {
 async function runTests() {
   console.log('--- Starting Scraper Tests ---');
 
-  testCacheExpiry();
+  runNormalizeUrlTests();
 
   await testScraper('KamaClips', scrapeKamaClips);
   await testScraper('ViralMMS', scrapeViralMms);

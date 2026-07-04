@@ -47,25 +47,29 @@ const chatSettings = {};
 // Map to store custom query IDs to avoid exceeding Telegram's 64-byte callback query data limit
 const customQueries = {};
 let queryCounter = 0;
+let customQueriesSize = 0;
 
 // Map to store video URLs for download to bypass 64-byte limit
 const videoDownloadUrls = new Map();
 let videoIdCounter = 0;
+let videoDownloadUrlsSize = 0;
 
 // Helper to store video URL and get short ID
 function getShortVideoId(url) {
   if (!url) return null;
   videoIdCounter++;
   const id = `v${videoIdCounter}`;
-  videoDownloadUrls.set(id, url);
+  videoDownloadUrls[id] = url;
+  videoDownloadUrlsSize++;
 
   // Prune map if too large
-  if (videoDownloadUrls.size > 10000) {
-    let count = 0;
-    for (const key of videoDownloadUrls.keys()) {
-      if (count >= 2000) break;
-      videoDownloadUrls.delete(key);
-      count++;
+  if (videoDownloadUrlsSize > 10000) {
+    const keys = Object.keys(videoDownloadUrls);
+    for (let i = 0; i < 2000; i++) {
+      if (keys[i] && videoDownloadUrls[keys[i]]) {
+        delete videoDownloadUrls[keys[i]];
+        videoDownloadUrlsSize--;
+      }
     }
   }
   return id;
@@ -79,19 +83,6 @@ function scheduleDeletion(ctx, messageIds, minutes) {
       messageIds.map((msgId) => ctx.telegram.deleteMessage(ctx.chat.id, msgId))
     );
   }, minutes * 60 * 1000);
-}
-
-// Helper to merge array results
-function mergeResults(results, maxPerSite = 2) {
-  const mergedPosts = [];
-  for (let i = 0; i < maxPerSite; i++) {
-    for (const siteResults of results) {
-      if (siteResults[i]) {
-        mergedPosts.push(siteResults[i]);
-      }
-    }
-  }
-  return mergedPosts;
 }
 
 // Consolidated AIO Scraper (shuffles/combines posts from all 8 sites)
@@ -344,12 +335,16 @@ bot.on('text', async (ctx) => {
   queryCounter++;
   const queryId = `q${queryCounter}`;
   customQueries[queryId] = text;
+  customQueriesSize++;
 
   // Prune map if too large
-  if (queryCounter > 5000) {
+  if (customQueriesSize > 5000) {
     const keys = Object.keys(customQueries);
     for (let i = 0; i < 1000; i++) {
-      delete customQueries[keys[i]];
+      if (keys[i] && customQueries[keys[i]]) {
+        delete customQueries[keys[i]];
+        customQueriesSize--;
+      }
     }
   }
 

@@ -235,6 +235,7 @@ async function scrapeViralMms(page = 1, limit = 10) {
                   if (node['@type'] === 'VideoObject') {
                     videoUrl = node.contentUrl;
                     thumbnail = node.thumbnailUrl;
+                    break;
                   }
                 }
               } catch (e) {}
@@ -332,6 +333,7 @@ async function scrapeDesiSexVdo(page = 1, searchTerm = '', limit = 10) {
                 if (node['@type'] === 'VideoObject') {
                   videoUrl = node.contentUrl;
                   thumbnail = node.thumbnailUrl;
+                  break;
                 }
               }
             } catch (e) {}
@@ -438,6 +440,7 @@ async function scrapeGenericDesiSite(siteName, baseUrl, cacheKeyPrefix, page = 1
                 if (node['@type'] === 'VideoObject') {
                   videoUrl = node.contentUrl;
                   thumbnail = node.thumbnailUrl;
+                  break;
                 }
               }
             } catch (e) {}
@@ -477,7 +480,104 @@ async function scrapeDesiBabe(page = 1, limit = 10) {
  * Scrapes Desihub.to
  */
 async function scrapeDesiHub(page = 1, limit = 10) {
-  return scrapeGenericDesiSite('DesiHub', 'https://desihub.to', 'desihub', page, limit);
+  const cacheKey = `desihub_${page}_l${limit}`;
+  const cached = getCached(cacheKey);
+  if (cached) return cached;
+
+  const baseUrl = 'https://desihub.to';
+  const url = page === 1 ? baseUrl : `${baseUrl}/page/${page}`;
+  try {
+    const res = await axiosGetWithRetry(url, { headers: HEADERS });
+    const $ = cheerio.load(res.data);
+    const posts = [];
+
+    $('script[type="application/ld+json"]').each((_, el) => {
+      try {
+        const data = JSON.parse($(el).text());
+        const graph = data['@graph'] || (Array.isArray(data) ? data : [data]);
+        for (const node of graph) {
+          if ((node['@type'] === 'CollectionPage' || node['@type'] === 'WebPage') && node.mainEntity && node.mainEntity.itemListElement) {
+            for (const item of node.mainEntity.itemListElement) {
+              if (item.url && item.name) {
+                posts.push({
+                  title: item.name,
+                  url: normalizeUrl(item.url, baseUrl),
+                  siteName: 'DesiHub'
+                });
+              }
+            }
+          }
+        }
+      } catch (e) {}
+    });
+
+    if (posts.length === 0) {
+      $('a[href^="/post/"]').each((_, el) => {
+        const title = $(el).find('h3').text().trim() || $(el).attr('title') || $(el).text().trim();
+        const href = $(el).attr('href');
+        if (title && href) {
+          posts.push({
+            title,
+            url: normalizeUrl(href, baseUrl),
+            siteName: 'DesiHub'
+          });
+        }
+      });
+    }
+
+    const uniquePosts = [];
+    const urls = new Set();
+    for (const post of posts) {
+      if (!urls.has(post.url)) {
+        urls.add(post.url);
+        uniquePosts.push(post);
+      }
+      if (uniquePosts.length >= limit) break;
+    }
+
+    const resolvedPosts = await Promise.all(
+      uniquePosts.map(async (post) => {
+        try {
+          const postRes = await axiosGetWithRetry(post.url, { headers: HEADERS });
+          const post$ = cheerio.load(postRes.data);
+          let videoUrl = null;
+          let thumbnail = null;
+
+          post$('script[type="application/ld+json"]').each((_, el) => {
+            try {
+              const data = JSON.parse(post$(el).text());
+              const graph = data['@graph'] || (Array.isArray(data) ? data : [data]);
+              for (const node of graph) {
+                if (node['@type'] === 'VideoObject') {
+                  videoUrl = node.contentUrl;
+                  thumbnail = node.thumbnailUrl;
+                  break;
+                }
+              }
+            } catch (e) {}
+          });
+
+          if (!videoUrl) {
+            const embedIframe = post$('iframe[src*="downloaddirect.xyz/embed"]').attr('src');
+            if (embedIframe) videoUrl = embedIframe;
+          }
+
+          post.videoUrl = normalizeUrl(videoUrl, baseUrl);
+          post.thumbnail = normalizeUrl(thumbnail || post$('meta[property="og:image"]').attr('content'), baseUrl);
+          return post;
+        } catch (err) {
+          return post;
+        }
+      })
+    );
+
+    const validPosts = resolvedPosts.filter(p => p.videoUrl);
+    setCached(cacheKey, validPosts);
+    return validPosts;
+  } catch (err) {
+    console.error(`Error scraping DesiHub (Page ${page}):`, err.message);
+    return [];
+  }
 }
 
 /**
@@ -740,6 +840,7 @@ async function scrapeMastiRaja(page = 1, searchTerm = '', limit = 10) {
 }
 
 export {
+  normalizeUrl,
   scrapeKamaClips,
   scrapeViralMms,
   scrapeDesiSexVdo,
