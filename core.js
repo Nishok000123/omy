@@ -65,13 +65,9 @@ function getShortVideoId(url) {
 function scheduleDeletion(ctx, messageIds, minutes) {
   if (!minutes || minutes <= 0) return;
   setTimeout(async () => {
-    for (const msgId of messageIds) {
-      try {
-        await ctx.telegram.deleteMessage(ctx.chat.id, msgId);
-      } catch (e) {
-        // Safe catch if user deleted the message manually
-      }
-    }
+    await Promise.allSettled(
+      messageIds.map((msgId) => ctx.telegram.deleteMessage(ctx.chat.id, msgId))
+    );
   }, minutes * 60 * 1000);
 }
 
