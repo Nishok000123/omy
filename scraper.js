@@ -835,6 +835,7 @@ async function scrapeMastiRaja(page = 1, searchTerm = '', limit = 10) {
 }
 
 export {
+  normalizeUrl,
   scrapeKamaClips,
   scrapeViralMms,
   scrapeDesiSexVdo,
