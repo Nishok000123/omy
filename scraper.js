@@ -57,6 +57,25 @@ function normalizeUrl(url, base) {
   return normalized;
 }
 
+// helper to extract video URL from specific iframe embeds
+function extractIframeVideoUrl(post$) {
+  const iframeSrc = post$('iframe[src*="player-x.php"]').attr('src');
+  if (iframeSrc) {
+    try {
+      const urlObj = new URL(iframeSrc);
+      const q = urlObj.searchParams.get('q');
+      if (q) {
+        const decoded = Buffer.from(q, 'base64').toString('utf8');
+        const match = decoded.match(/src=["'](https?:\/\/[^"']+)["']/);
+        if (match) return match[1];
+      }
+    } catch (e) {
+      // Ignore URL parsing errors
+    }
+  }
+  return null;
+}
+
 /**
  * Scrapes Kamaclips.com
  */
@@ -113,16 +132,8 @@ async function scrapeKamaClips(page = 1, searchTerm = '', limit = 10) {
           let videoUrl = post$('meta[itemprop="contentURL"]').attr('content');
 
           if (!videoUrl) {
-            const iframeSrc = post$('iframe[src*="player-x.php"]').attr('src');
-            if (iframeSrc) {
-              const urlObj = new URL(iframeSrc);
-              const q = urlObj.searchParams.get('q');
-              if (q) {
-                const decoded = Buffer.from(q, 'base64').toString('utf8');
-                const match = decoded.match(/src=["'](https?:\/\/[^"']+)["']/);
-                if (match) videoUrl = match[1];
-              }
-            }
+            const iframeUrl = extractIframeVideoUrl(post$);
+            if (iframeUrl) videoUrl = iframeUrl;
           }
 
           if (!videoUrl) {
@@ -354,14 +365,13 @@ async function scrapeDesiSexVdo(page = 1, searchTerm = '', limit = 10) {
 }
 
 /**
- * Scrapes Desibabe.tv
+ * Generic scraper function for Desi sites with similar structures (e.g. DesiBabe, DesiHub)
  */
-async function scrapeDesiBabe(page = 1, limit = 10) {
-  const cacheKey = `desibabe_${page}_l${limit}`;
+async function scrapeGenericDesiSite(siteName, baseUrl, cacheKeyPrefix, page = 1, limit = 10) {
+  const cacheKey = `${cacheKeyPrefix}_${page}_l${limit}`;
   const cached = getCached(cacheKey);
   if (cached) return cached;
 
-  const baseUrl = 'https://desibabe.tv';
   const url = page === 1 ? baseUrl : `${baseUrl}/page/${page}`;
   try {
     const res = await axiosGetWithRetry(url, { headers: HEADERS });
@@ -379,7 +389,7 @@ async function scrapeDesiBabe(page = 1, limit = 10) {
                 posts.push({
                   title: item.name,
                   url: normalizeUrl(item.url, baseUrl),
-                  siteName: 'DesiBabe'
+                  siteName: siteName
                 });
               }
             }
@@ -396,7 +406,7 @@ async function scrapeDesiBabe(page = 1, limit = 10) {
           posts.push({
             title,
             url: normalizeUrl(href, baseUrl),
-            siteName: 'DesiBabe'
+            siteName: siteName
           });
         }
       });
@@ -451,112 +461,23 @@ async function scrapeDesiBabe(page = 1, limit = 10) {
     setCached(cacheKey, validPosts);
     return validPosts;
   } catch (err) {
-    console.error(`Error scraping DesiBabe (Page ${page}):`, err.message);
+    console.error(`Error scraping ${siteName} (Page ${page}):`, err.message);
     return [];
   }
+}
+
+/**
+ * Scrapes Desibabe.tv
+ */
+async function scrapeDesiBabe(page = 1, limit = 10) {
+  return scrapeGenericDesiSite('DesiBabe', 'https://desibabe.tv', 'desibabe', page, limit);
 }
 
 /**
  * Scrapes Desihub.to
  */
 async function scrapeDesiHub(page = 1, limit = 10) {
-  const cacheKey = `desihub_${page}_l${limit}`;
-  const cached = getCached(cacheKey);
-  if (cached) return cached;
-
-  const baseUrl = 'https://desihub.to';
-  const url = page === 1 ? baseUrl : `${baseUrl}/page/${page}`;
-  try {
-    const res = await axiosGetWithRetry(url, { headers: HEADERS });
-    const $ = cheerio.load(res.data);
-    const posts = [];
-
-    $('script[type="application/ld+json"]').each((_, el) => {
-      try {
-        const data = JSON.parse($(el).text());
-        const graph = data['@graph'] || (Array.isArray(data) ? data : [data]);
-        for (const node of graph) {
-          if ((node['@type'] === 'CollectionPage' || node['@type'] === 'WebPage') && node.mainEntity && node.mainEntity.itemListElement) {
-            for (const item of node.mainEntity.itemListElement) {
-              if (item.url && item.name) {
-                posts.push({
-                  title: item.name,
-                  url: normalizeUrl(item.url, baseUrl),
-                  siteName: 'DesiHub'
-                });
-              }
-            }
-          }
-        }
-      } catch (e) {}
-    });
-
-    if (posts.length === 0) {
-      $('a[href^="/post/"]').each((_, el) => {
-        const title = $(el).find('h3').text().trim() || $(el).attr('title') || $(el).text().trim();
-        const href = $(el).attr('href');
-        if (title && href) {
-          posts.push({
-            title,
-            url: normalizeUrl(href, baseUrl),
-            siteName: 'DesiHub'
-          });
-        }
-      });
-    }
-
-    const uniquePosts = [];
-    const urls = new Set();
-    for (const post of posts) {
-      if (!urls.has(post.url)) {
-        urls.add(post.url);
-        uniquePosts.push(post);
-      }
-      if (uniquePosts.length >= limit) break;
-    }
-
-    const resolvedPosts = await Promise.all(
-      uniquePosts.map(async (post) => {
-        try {
-          const postRes = await axiosGetWithRetry(post.url, { headers: HEADERS });
-          const post$ = cheerio.load(postRes.data);
-          let videoUrl = null;
-          let thumbnail = null;
-
-          post$('script[type="application/ld+json"]').each((_, el) => {
-            try {
-              const data = JSON.parse(post$(el).text());
-              const graph = data['@graph'] || (Array.isArray(data) ? data : [data]);
-              for (const node of graph) {
-                if (node['@type'] === 'VideoObject') {
-                  videoUrl = node.contentUrl;
-                  thumbnail = node.thumbnailUrl;
-                }
-              }
-            } catch (e) {}
-          });
-
-          if (!videoUrl) {
-            const embedIframe = post$('iframe[src*="downloaddirect.xyz/embed"]').attr('src');
-            if (embedIframe) videoUrl = embedIframe;
-          }
-
-          post.videoUrl = normalizeUrl(videoUrl, baseUrl);
-          post.thumbnail = normalizeUrl(thumbnail || post$('meta[property="og:image"]').attr('content'), baseUrl);
-          return post;
-        } catch (err) {
-          return post;
-        }
-      })
-    );
-
-    const validPosts = resolvedPosts.filter(p => p.videoUrl);
-    setCached(cacheKey, validPosts);
-    return validPosts;
-  } catch (err) {
-    console.error(`Error scraping DesiHub (Page ${page}):`, err.message);
-    return [];
-  }
+  return scrapeGenericDesiSite('DesiHub', 'https://desihub.to', 'desihub', page, limit);
 }
 
 /**
@@ -615,16 +536,8 @@ async function scrapeDesiBF(page = 1, searchTerm = '', limit = 10) {
           let videoUrl = post$('meta[itemprop="contentURL"]').attr('content');
 
           if (!videoUrl) {
-            const iframeSrc = post$('iframe[src*="player-x.php"]').attr('src');
-            if (iframeSrc) {
-              const urlObj = new URL(iframeSrc);
-              const q = urlObj.searchParams.get('q');
-              if (q) {
-                const decoded = Buffer.from(q, 'base64').toString('utf8');
-                const match = decoded.match(/src=["'](https?:\/\/[^"']+)["']/);
-                if (match) videoUrl = match[1];
-              }
-            }
+            const iframeUrl = extractIframeVideoUrl(post$);
+            if (iframeUrl) videoUrl = iframeUrl;
           }
 
           if (!videoUrl) {
@@ -801,16 +714,8 @@ async function scrapeMastiRaja(page = 1, searchTerm = '', limit = 10) {
           let videoUrl = post$('meta[itemprop="contentURL"]').attr('content');
 
           if (!videoUrl) {
-            const iframeSrc = post$('iframe[src*="player-x.php"]').attr('src');
-            if (iframeSrc) {
-              const urlObj = new URL(iframeSrc);
-              const q = urlObj.searchParams.get('q');
-              if (q) {
-                const decoded = Buffer.from(q, 'base64').toString('utf8');
-                const match = decoded.match(/src=["'](https?:\/\/[^"']+)["']/);
-                if (match) videoUrl = match[1];
-              }
-            }
+            const iframeUrl = extractIframeVideoUrl(post$);
+            if (iframeUrl) videoUrl = iframeUrl;
           }
 
           if (!videoUrl) {
@@ -842,5 +747,9 @@ export {
   scrapeDesiHub,
   scrapeDesiBF,
   scrapeDesiLeak49,
-  scrapeMastiRaja
+  scrapeMastiRaja,
+  getCached,
+  setCached,
+  cache,
+  CACHE_TTL
 };
