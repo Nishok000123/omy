@@ -1,6 +1,10 @@
 import { Telegraf, Markup } from 'telegraf';
 import dotenv from 'dotenv';
 import axios from 'axios';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import crypto from 'crypto';
 import {
   scrapeKamaClips,
   scrapeViralMms,
@@ -688,6 +692,7 @@ bot.action(/^dl_(v\d+)$/, async (ctx) => {
 
   const statusMsg = await ctx.replyWithMarkdown('⏳ _Downloading video..._').catch(() => {});
 
+  let tempFilePath = null;
   try {
     const response = await axios({
       method: 'GET',
@@ -698,7 +703,18 @@ bot.action(/^dl_(v\d+)$/, async (ctx) => {
       }
     });
 
-    await ctx.replyWithVideo({ source: response.data }, {
+    tempFilePath = path.join(os.tmpdir(), `vid_${crypto.randomBytes(8).toString('hex')}.mp4`);
+    const writer = fs.createWriteStream(tempFilePath);
+
+    response.data.pipe(writer);
+
+    await new Promise((resolve, reject) => {
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+      response.data.on('error', reject);
+    });
+
+    await ctx.replyWithVideo({ source: fs.createReadStream(tempFilePath) }, {
       caption: '✅ *Video Downloaded Successfully*',
       parse_mode: 'Markdown'
     });
@@ -712,6 +728,14 @@ bot.action(/^dl_(v\d+)$/, async (ctx) => {
       await ctx.telegram.deleteMessage(ctx.chat.id, statusMsg.message_id).catch(() => {});
     }
     await ctx.replyWithMarkdown('❌ Failed to download the video. The file might be too large or the server is blocking requests.').catch(() => {});
+  } finally {
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      try {
+        fs.unlinkSync(tempFilePath);
+      } catch (err) {
+        console.error('Failed to delete temporary file:', err);
+      }
+    }
   }
 });
 
