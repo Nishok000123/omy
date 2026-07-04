@@ -81,19 +81,6 @@ function scheduleDeletion(ctx, messageIds, minutes) {
   }, minutes * 60 * 1000);
 }
 
-// Helper to merge array results
-function mergeResults(results, maxPerSite = 2) {
-  const mergedPosts = [];
-  for (let i = 0; i < maxPerSite; i++) {
-    for (const siteResults of results) {
-      if (siteResults[i]) {
-        mergedPosts.push(siteResults[i]);
-      }
-    }
-  }
-  return mergedPosts;
-}
-
 // Consolidated AIO Scraper (shuffles/combines posts from all 8 sites)
 async function scrapeAIO(page = 1, filterType = 'latest') {
   const limitPerSite = 3;

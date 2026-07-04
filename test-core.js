@@ -19,9 +19,7 @@ function runTests() {
   }
 
   // Clear videoDownloadUrls before tests to ensure clean state
-  for (const key in videoDownloadUrls) {
-    delete videoDownloadUrls[key];
-  }
+  videoDownloadUrls.clear();
 
   runTest('Falsy URLs return null', () => {
     assert.strictEqual(getShortVideoId(''), null);
@@ -29,7 +27,7 @@ function runTests() {
     assert.strictEqual(getShortVideoId(undefined), null);
 
     // ensure nothing was added
-    assert.strictEqual(Object.keys(videoDownloadUrls).length, 0);
+    assert.strictEqual(videoDownloadUrls.size, 0);
   });
 
   runTest('Valid URL returns correct ID and stores it', () => {
@@ -40,8 +38,8 @@ function runTests() {
     assert.match(id, /^v\d+$/);
 
     // Check if it's stored correctly
-    assert.strictEqual(videoDownloadUrls[id], url);
-    assert.strictEqual(Object.keys(videoDownloadUrls).length, 1);
+    assert.strictEqual(videoDownloadUrls.get(id), url);
+    assert.strictEqual(videoDownloadUrls.size, 1);
   });
 
   runTest('Pruning logic works correctly when size > 10000', () => {
@@ -50,6 +48,7 @@ function runTests() {
       getShortVideoId(`https://example.com/video${i}.mp4`);
     }
 
+    assert.strictEqual(videoDownloadUrls.size, 10000);
     assert.strictEqual(Object.keys(videoDownloadUrls).length, 10000);
 
     // Adding one more should trigger pruning
@@ -60,6 +59,7 @@ function runTests() {
     // keys.length > 10000
     // so if length becomes 10001
     // it deletes keys[0] to keys[1999]
+    assert.strictEqual(videoDownloadUrls.size, 8001);
     assert.strictEqual(Object.keys(videoDownloadUrls).length, 8001);
   });
 
