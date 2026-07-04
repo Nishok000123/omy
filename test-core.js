@@ -49,7 +49,6 @@ function runTests() {
     }
 
     assert.strictEqual(videoDownloadUrls.size, 10000);
-    assert.strictEqual(Object.keys(videoDownloadUrls).length, 10000);
 
     // Adding one more should trigger pruning
     getShortVideoId('https://example.com/trigger_prune.mp4');
@@ -60,7 +59,6 @@ function runTests() {
     // so if length becomes 10001
     // it deletes keys[0] to keys[1999]
     assert.strictEqual(videoDownloadUrls.size, 8001);
-    assert.strictEqual(Object.keys(videoDownloadUrls).length, 8001);
   });
 
   console.log(`--- Core Tests Finished: ${testsPassed} passed, ${testsFailed} failed ---`);

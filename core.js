@@ -1,6 +1,9 @@
 import { Telegraf, Markup } from 'telegraf';
 import dotenv from 'dotenv';
 import axios from 'axios';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 import {
   scrapeKamaClips,
   scrapeViralMms,
@@ -59,15 +62,15 @@ function getShortVideoId(url) {
   if (!url) return null;
   videoIdCounter++;
   const id = `v${videoIdCounter}`;
-  videoDownloadUrls[id] = url;
+  videoDownloadUrls.set(id, url);
   videoDownloadUrlsSize++;
 
   // Prune map if too large
   if (videoDownloadUrlsSize > 10000) {
-    const keys = Object.keys(videoDownloadUrls);
+    const keys = Array.from(videoDownloadUrls.keys());
     for (let i = 0; i < 2000; i++) {
-      if (keys[i] && videoDownloadUrls[keys[i]]) {
-        delete videoDownloadUrls[keys[i]];
+      if (keys[i] && videoDownloadUrls.has(keys[i])) {
+        videoDownloadUrls.delete(keys[i]);
         videoDownloadUrlsSize--;
       }
     }
@@ -83,6 +86,11 @@ function scheduleDeletion(ctx, messageIds, minutes) {
       messageIds.map((msgId) => ctx.telegram.deleteMessage(ctx.chat.id, msgId))
     );
   }, minutes * 60 * 1000);
+}
+
+// Helper to merge and shuffle results from multiple scrapers
+function mergeResults(resultsArray) {
+  return [].concat(...resultsArray).filter(Boolean).sort(() => Math.random() - 0.5);
 }
 
 // Consolidated AIO Scraper (shuffles/combines posts from all 8 sites)
@@ -683,6 +691,7 @@ bot.action(/^dl_(v\d+)$/, async (ctx) => {
 
   const statusMsg = await ctx.replyWithMarkdown('⏳ _Downloading video..._').catch(() => {});
 
+  let tempFilePath = null;
   try {
     const response = await axios({
       method: 'GET',
@@ -693,7 +702,18 @@ bot.action(/^dl_(v\d+)$/, async (ctx) => {
       }
     });
 
-    await ctx.replyWithVideo({ source: response.data }, {
+    tempFilePath = path.join(os.tmpdir(), `video_${Date.now()}.mp4`);
+    const writer = fs.createWriteStream(tempFilePath);
+
+    response.data.pipe(writer);
+
+    await new Promise((resolve, reject) => {
+      response.data.on('error', reject);
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+    });
+
+    await ctx.replyWithVideo({ source: tempFilePath }, {
       caption: '✅ *Video Downloaded Successfully*',
       parse_mode: 'Markdown'
     });
@@ -707,6 +727,14 @@ bot.action(/^dl_(v\d+)$/, async (ctx) => {
       await ctx.telegram.deleteMessage(ctx.chat.id, statusMsg.message_id).catch(() => {});
     }
     await ctx.replyWithMarkdown('❌ Failed to download the video. The file might be too large or the server is blocking requests.').catch(() => {});
+  } finally {
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      try {
+        fs.unlinkSync(tempFilePath);
+      } catch (cleanupErr) {
+        console.error('Error cleaning up temp file:', cleanupErr);
+      }
+    }
   }
 });
 
