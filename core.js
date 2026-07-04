@@ -49,7 +49,7 @@ const customQueries = {};
 let queryCounter = 0;
 
 // Map to store video URLs for download to bypass 64-byte limit
-const videoDownloadUrls = {};
+const videoDownloadUrls = new Map();
 let videoIdCounter = 0;
 
 // Helper to store video URL and get short ID
@@ -57,13 +57,15 @@ function getShortVideoId(url) {
   if (!url) return null;
   videoIdCounter++;
   const id = `v${videoIdCounter}`;
-  videoDownloadUrls[id] = url;
+  videoDownloadUrls.set(id, url);
 
   // Prune map if too large
-  const keys = Object.keys(videoDownloadUrls);
-  if (keys.length > 10000) {
-    for (let i = 0; i < 2000; i++) {
-      delete videoDownloadUrls[keys[i]];
+  if (videoDownloadUrls.size > 10000) {
+    let count = 0;
+    for (const key of videoDownloadUrls.keys()) {
+      if (count >= 2000) break;
+      videoDownloadUrls.delete(key);
+      count++;
     }
   }
   return id;
@@ -679,7 +681,7 @@ bot.action(new RegExp('^csearch_(' + validSitesPattern + ')_(.+)_(\\d+)$'), asyn
 
 bot.action(/^dl_(v\d+)$/, async (ctx) => {
   const shortId = ctx.match[1];
-  const videoUrl = videoDownloadUrls[shortId];
+  const videoUrl = videoDownloadUrls.get(shortId);
 
   if (!videoUrl) {
     return ctx.answerCbQuery('Download link expired. Please search again.').catch(() => {});
