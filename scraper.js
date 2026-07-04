@@ -57,6 +57,25 @@ function normalizeUrl(url, base) {
   return normalized;
 }
 
+// helper to extract video URL from specific iframe embeds
+function extractIframeVideoUrl(post$) {
+  const iframeSrc = post$('iframe[src*="player-x.php"]').attr('src');
+  if (iframeSrc) {
+    try {
+      const urlObj = new URL(iframeSrc);
+      const q = urlObj.searchParams.get('q');
+      if (q) {
+        const decoded = Buffer.from(q, 'base64').toString('utf8');
+        const match = decoded.match(/src=["'](https?:\/\/[^"']+)["']/);
+        if (match) return match[1];
+      }
+    } catch (e) {
+      // Ignore URL parsing errors
+    }
+  }
+  return null;
+}
+
 /**
  * Scrapes Kamaclips.com
  */
@@ -113,16 +132,8 @@ async function scrapeKamaClips(page = 1, searchTerm = '', limit = 10) {
           let videoUrl = post$('meta[itemprop="contentURL"]').attr('content');
 
           if (!videoUrl) {
-            const iframeSrc = post$('iframe[src*="player-x.php"]').attr('src');
-            if (iframeSrc) {
-              const urlObj = new URL(iframeSrc);
-              const q = urlObj.searchParams.get('q');
-              if (q) {
-                const decoded = Buffer.from(q, 'base64').toString('utf8');
-                const match = decoded.match(/src=["'](https?:\/\/[^"']+)["']/);
-                if (match) videoUrl = match[1];
-              }
-            }
+            const iframeUrl = extractIframeVideoUrl(post$);
+            if (iframeUrl) videoUrl = iframeUrl;
           }
 
           if (!videoUrl) {
@@ -525,16 +536,8 @@ async function scrapeDesiBF(page = 1, searchTerm = '', limit = 10) {
           let videoUrl = post$('meta[itemprop="contentURL"]').attr('content');
 
           if (!videoUrl) {
-            const iframeSrc = post$('iframe[src*="player-x.php"]').attr('src');
-            if (iframeSrc) {
-              const urlObj = new URL(iframeSrc);
-              const q = urlObj.searchParams.get('q');
-              if (q) {
-                const decoded = Buffer.from(q, 'base64').toString('utf8');
-                const match = decoded.match(/src=["'](https?:\/\/[^"']+)["']/);
-                if (match) videoUrl = match[1];
-              }
-            }
+            const iframeUrl = extractIframeVideoUrl(post$);
+            if (iframeUrl) videoUrl = iframeUrl;
           }
 
           if (!videoUrl) {
@@ -711,16 +714,8 @@ async function scrapeMastiRaja(page = 1, searchTerm = '', limit = 10) {
           let videoUrl = post$('meta[itemprop="contentURL"]').attr('content');
 
           if (!videoUrl) {
-            const iframeSrc = post$('iframe[src*="player-x.php"]').attr('src');
-            if (iframeSrc) {
-              const urlObj = new URL(iframeSrc);
-              const q = urlObj.searchParams.get('q');
-              if (q) {
-                const decoded = Buffer.from(q, 'base64').toString('utf8');
-                const match = decoded.match(/src=["'](https?:\/\/[^"']+)["']/);
-                if (match) videoUrl = match[1];
-              }
-            }
+            const iframeUrl = extractIframeVideoUrl(post$);
+            if (iframeUrl) videoUrl = iframeUrl;
           }
 
           if (!videoUrl) {
