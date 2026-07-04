@@ -33,6 +33,14 @@ const TAG_LABELS = {
   young: 'Young'
 };
 
+const HELP_TEXT = `📖 *Usage Instructions*:\n\n` +
+  `1. Click on any site button to open the page selector.\n` +
+  `2. Select a quick tag directly from the front menu.\n` +
+  `3. Or, **type any search word** (e.g. \`bhabhi\`) and send it to search the supported sites!\n` +
+  `4. Toggle the **Auto-Delete Timer** between Off, 15 Min, or 30 Min to automatically wipe media from the chat.\n` +
+  `5. At the bottom of the last post, use pagination controls to scroll pages.\n\n` +
+  `Use /start to open the main menu.`;
+
 // In-memory store for chat settings (default to 15 minutes auto-delete)
 const chatSettings = {};
 
@@ -229,26 +237,12 @@ bot.start((ctx) => {
 });
 
 bot.help((ctx) => {
-  const helpText = `📖 *Usage Instructions*:\n\n` +
-    `1. Click on any site button to open the page selector.\n` +
-    `2. Select a quick tag directly from the front menu.\n` +
-    `3. Or, **type any search word** (e.g. \`bhabhi\`) and send it to search the supported sites!\n` +
-    `4. Toggle the **Auto-Delete Timer** between Off, 15 Min, or 30 Min to automatically wipe media from the chat.\n` +
-    `5. At the bottom of the last post, use pagination controls to scroll pages.\n\n` +
-    `Use /start to open the main menu.`;
-  ctx.replyWithMarkdown(helpText, getMainMenu(ctx.chat.id)).catch(() => {});
+  ctx.replyWithMarkdown(HELP_TEXT, getMainMenu(ctx.chat.id)).catch(() => {});
 });
 
 bot.action('help', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
-  const helpText = `📖 *Usage Instructions*:\n\n` +
-    `1. Click on any site button to open the page selector.\n` +
-    `2. Select a quick tag directly from the front menu.\n` +
-    `3. Or, **type any search word** (e.g. \`bhabhi\`) and send it to search the supported sites!\n` +
-    `4. Toggle the **Auto-Delete Timer** between Off, 15 Min, or 30 Min to automatically wipe media from the chat.\n` +
-    `5. At the bottom of the last post, use pagination controls to scroll pages.\n\n` +
-    `Use /start to open the main menu.`;
-  await ctx.editMessageText(helpText, {
+  await ctx.editMessageText(HELP_TEXT, {
     parse_mode: 'Markdown',
     ...getMainMenu(ctx.chat.id)
   }).catch(() => {});
