@@ -1,18 +1,6 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import puppeteer from 'puppeteer-core';
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
 
-// Path to Chrome or Edge on this machine (used for Cloudflare bypass)
-const CHROME_PATH = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-const EDGE_PATH = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-const BROWSER_PATH = (() => {
-  const fsSync = require('fs');
-  try { fsSync.accessSync(CHROME_PATH); return CHROME_PATH; } catch (_) {}
-  try { fsSync.accessSync(EDGE_PATH); return EDGE_PATH; } catch (_) {}
-  return null;
-})();
 
 
 const HEADERS = {
@@ -157,146 +145,6 @@ function extractIframeVideoUrl(post$) {
     }
   }
   return null;
-}
-
-/**
- * Fetch a Cloudflare-protected page using headless Chrome/Edge.
- * Returns the page HTML as a string, or null on failure.
- * @param {string} url - Full URL to fetch
- */
-async function cfScrapeHtml(url) {
-  if (!BROWSER_PATH) {
-    console.warn('cfScrapeHtml: no browser found, skipping headless fetch');
-    return null;
-  }
-  let browser;
-  try {
-    browser = await puppeteer.launch({
-      executablePath: BROWSER_PATH,
-      headless: 'new',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-blink-features=AutomationControlled'
-      ]
-    });
-    const page = await browser.newPage();
-    await page.setUserAgent(getRandomUserAgent());
-    await page.setExtraHTTPHeaders({
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Referer': new URL(url).origin
-    });
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-    // Wait a moment for CF challenge to resolve
-    await page.waitForTimeout(3000);
-    const html = await page.content();
-    return html;
-  } catch (err) {
-    console.error('cfScrapeHtml error:', err.message);
-    return null;
-  } finally {
-    if (browser) await browser.close().catch(() => {});
-  }
-}
-
-/**
- * Scrapes Kamaclips.com
- */
-async function scrapeKamaClips(page = 1, searchTerm = '', limit = 10) {
-  const cacheKey = `kamaclips_${page}_${searchTerm || 'default'}_l${limit}`;
-  const cached = getCached(cacheKey);
-  if (cached) return cached;
-
-  const baseUrl = 'https://kamaclips.com';
-  let url = '';
-  if (searchTerm) {
-    url = page === 1 
-      ? `${baseUrl}/?s=${encodeURIComponent(searchTerm)}` 
-      : `${baseUrl}/page/${page}/?s=${encodeURIComponent(searchTerm)}`;
-  } else {
-    url = page === 1 ? baseUrl : `${baseUrl}/page/${page}/`;
-  }
-
-  try {
-    // Try plain axios first (fast path)
-    let html = null;
-    try {
-      await ensureClearance(baseUrl);
-      const res = await axiosGetWithRetry(url, { headers: getRequestHeaders(baseUrl) });
-      if (res.status === 403 || res.status === 503) {
-        throw new Error(`CF blocked: ${res.status}`);
-      }
-      html = res.data;
-    } catch (axiosErr) {
-      console.warn(`KamaClips axios blocked (${axiosErr.message}), falling back to headless browser...`);
-      html = await cfScrapeHtml(url);
-    }
-
-    if (!html) {
-      console.error('KamaClips: both axios and headless browser failed.');
-      return [];
-    }
-
-    const $ = cheerio.load(html);
-    const posts = [];
-
-    $('.video-loop .video-block').each((_, el) => {
-      const title = $(el).find('a.infos').attr('title') || $(el).find('.title').text().trim();
-      const href = $(el).find('a.infos').attr('href') || $(el).find('a.thumb').attr('href');
-      const imgSrc = $(el).find('img.video-img').attr('data-src') || $(el).find('img.video-img').attr('src');
-
-      if (title && href) {
-        posts.push({
-          title,
-          url: normalizeUrl(href, baseUrl),
-          thumbnail: normalizeUrl(imgSrc, baseUrl),
-          siteName: 'KamaClips',
-          siteBaseUrl: baseUrl
-        });
-      }
-    });
-
-    const uniquePosts = [];
-    const urls = new Set();
-    for (const post of posts) {
-      if (!urls.has(post.url)) {
-        urls.add(post.url);
-        uniquePosts.push(post);
-      }
-      if (uniquePosts.length >= limit) break;
-    }
-
-    const resolvedPosts = await Promise.all(
-      uniquePosts.map(async (post) => {
-        try {
-          const postRes = await axiosGetWithRetry(post.url, { headers: getRequestHeaders(baseUrl) });
-          const post$ = cheerio.load(postRes.data);
-          let videoUrl = post$('meta[itemprop="contentURL"]').attr('content');
-
-          if (!videoUrl) {
-            const iframeUrl = extractIframeVideoUrl(post$);
-            if (iframeUrl) videoUrl = iframeUrl;
-          }
-
-          if (!videoUrl) {
-            videoUrl = post$('video source').attr('src');
-          }
-
-          post.videoUrl = normalizeUrl(videoUrl, baseUrl);
-          return post;
-        } catch (err) {
-          return post;
-        }
-      })
-    );
-
-    const validPosts = resolvedPosts.filter(p => p.videoUrl);
-    setCached(cacheKey, validPosts);
-    return validPosts;
-  } catch (err) {
-    console.error(`Error scraping KamaClips (Page ${page}, Search: ${searchTerm}):`, err.message);
-    return [];
-  }
 }
 
 /**
@@ -1003,7 +851,6 @@ export {
   normalizeUrl,
   getRequestHeaders,
   ensureClearance,
-  scrapeKamaClips,
   scrapeViralMms,
   scrapeDesiSexVdo,
   scrapeDesiBabe,
