@@ -5,6 +5,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import {
+  scrapeDesiPorn,
   scrapeViralMms,
   scrapeDesiSexVdo,
   scrapeDesiBabe,
@@ -137,10 +138,11 @@ function scheduleDeletion(ctx, messageIds, minutes) {
   }, minutes * 60 * 1000);
 }
 
-// Consolidated AIO Scraper (shuffles/combines posts from all 7 sites)
+// Consolidated AIO Scraper (shuffles/combines posts from all 8 sites)
 async function scrapeAIO(page = 1, filterType = 'latest') {
   const limitPerSite = 3;
   const results = await Promise.all([
+    scrapeDesiPorn(page, '', limitPerSite).catch(() => []),
     scrapeViralMms(page, limitPerSite).catch(() => []),
     scrapeDesiSexVdo(page, '', limitPerSite).catch(() => []),
     scrapeDesiBabe(page, limitPerSite).catch(() => []),
@@ -158,6 +160,7 @@ async function scrapeAIO(page = 1, filterType = 'latest') {
 async function searchAllSites(page = 1, query = '') {
   const limitPerSite = 3;
   const results = await Promise.all([
+    scrapeDesiPorn(page, query, limitPerSite).catch(() => []),
     scrapeDesiSexVdo(page, query, limitPerSite).catch(() => []),
     scrapeDesiBF(page, query, limitPerSite).catch(() => []),
     scrapeDesiLeak49(page, query, limitPerSite).catch(() => []),
@@ -182,10 +185,10 @@ function getMainMenu(chatId) {
       Markup.button.callback('🌟 Popular (All-in-One)', 'scrape_popular_all_in_one_1')
     ],
     // Individual Sites
-    [Markup.button.callback('ViralMMS 🎬', 'site_viralmms'), Markup.button.callback('DesiSexVdo 🎥', 'site_desisexvdo')],
-    [Markup.button.callback('DesiBabe 🍑', 'site_desibabe'), Markup.button.callback('DesiHub 🇮🇳', 'site_desihub')],
-    [Markup.button.callback('DesiBF 💋', 'site_desibf'), Markup.button.callback('DesiLeak49 💦', 'site_desileak49')],
-    [Markup.button.callback('MastiRaja 🍿', 'site_mastiraja')],
+    [Markup.button.callback('DesiPorn 🔥', 'site_desiporn'), Markup.button.callback('ViralMMS 🎬', 'site_viralmms')],
+    [Markup.button.callback('DesiSexVdo 🎥', 'site_desisexvdo'), Markup.button.callback('DesiBabe 🍑', 'site_desibabe')],
+    [Markup.button.callback('DesiHub 🇮🇳', 'site_desihub'), Markup.button.callback('DesiBF 💋', 'site_desibf')],
+    [Markup.button.callback('DesiLeak49 💦', 'site_desileak49'), Markup.button.callback('MastiRaja 🍿', 'site_mastiraja')],
     // Predefined Tags
     [Markup.button.callback('Tamil 🇮🇳', 'tag_tamil'), Markup.button.callback('Mallu 🥥', 'tag_mallu')],
     [Markup.button.callback('South Indian 🌴', 'tag_south_indian'), Markup.button.callback('Young 👧', 'tag_young')],
@@ -329,6 +332,7 @@ bot.action('toggle_autodelete', async (ctx) => {
 });
 
 // Setup site triggers to load page selectors
+bot.action('site_desiporn', (ctx) => sendPageSelector(ctx, 'DesiPorn', 'desiporn'));
 bot.action('site_viralmms', (ctx) => sendPageSelector(ctx, 'ViralMMS', 'viralmms'));
 bot.action('site_desisexvdo', (ctx) => sendPageSelector(ctx, 'DesiSexVdo', 'desisexvdo'));
 bot.action('site_desibabe', (ctx) => sendPageSelector(ctx, 'DesiBabe', 'desibabe'));
@@ -346,10 +350,11 @@ bot.action(/^tag_(.+)$/, async (ctx) => {
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.callback('🔍 Combined Search (All Sites)', `search_all_${tagKey}_1`)],
     [
-      Markup.button.callback('DesiSexVdo 🎥', `search_desisexvdo_${tagKey}_1`),
-      Markup.button.callback('DesiBF 💋', `search_desibf_${tagKey}_1`)
+      Markup.button.callback('DesiPorn 🔥', `search_desiporn_${tagKey}_1`),
+      Markup.button.callback('DesiSexVdo 🎥', `search_desisexvdo_${tagKey}_1`)
     ],
     [
+      Markup.button.callback('DesiBF 💋', `search_desibf_${tagKey}_1`),
       Markup.button.callback('DesiLeak49 💦', `search_desileak49_${tagKey}_1`),
       Markup.button.callback('MastiRaja 🍿', `search_mastiraja_${tagKey}_1`)
     ],
@@ -396,10 +401,11 @@ bot.on('text', async (ctx) => {
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.callback('🔍 Combined Search (All Sites)', `csearch_all_${queryId}_1`)],
     [
-      Markup.button.callback('DesiSexVdo 🎥', `csearch_desisexvdo_${queryId}_1`),
-      Markup.button.callback('DesiBF 💋', `csearch_desibf_${queryId}_1`)
+      Markup.button.callback('DesiPorn 🔥', `csearch_desiporn_${queryId}_1`),
+      Markup.button.callback('DesiSexVdo 🎥', `csearch_desisexvdo_${queryId}_1`)
     ],
     [
+      Markup.button.callback('DesiBF 💋', `csearch_desibf_${queryId}_1`),
       Markup.button.callback('DesiLeak49 💦', `csearch_desileak49_${queryId}_1`),
       Markup.button.callback('MastiRaja 🍿', `csearch_mastiraja_${queryId}_1`)
     ],
@@ -597,6 +603,9 @@ bot.action(/^scrape_([a-z0-9_]+)_(\d+)$/, async (ctx) => {
   } else if (siteKey === 'popular_all_in_one') {
     siteName = 'Popular (All-in-One)';
     scrapeFn = (p) => scrapeAIO(p, 'popular');
+  } else if (siteKey === 'desiporn') {
+    siteName = 'DesiPorn';
+    scrapeFn = scrapeDesiPorn;
   } else if (siteKey === 'viralmms') {
     siteName = 'ViralMMS';
     scrapeFn = scrapeViralMms;
@@ -627,7 +636,7 @@ bot.action(/^scrape_([a-z0-9_]+)_(\d+)$/, async (ctx) => {
   }
 });
 
-const validSitesPattern = 'all|viralmms|desisexvdo|desibabe|desihub|desibf|desileak49|mastiraja|trending_all_in_one|popular_all_in_one';
+const validSitesPattern = 'all|desiporn|viralmms|desisexvdo|desibabe|desihub|desibf|desileak49|mastiraja|trending_all_in_one|popular_all_in_one';
 
 // Register generic tag search handler
 bot.action(new RegExp('^search_(' + validSitesPattern + ')_(.+)_(\\d+)$'), async (ctx) => {

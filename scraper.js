@@ -148,6 +148,92 @@ function extractIframeVideoUrl(post$) {
 }
 
 /**
+ * Scrapes DesiPorn.one  (KamaClips replacement — no Cloudflare block)
+ * Listing: div.item > a[href*="/videos/"]  |  Search: /search/?q=term&from=N
+ */
+async function scrapeDesiPorn(page = 1, searchTerm = '', limit = 10) {
+  const cacheKey = `desiporn_${page}_${searchTerm || 'default'}_l${limit}`;
+  const cached = getCached(cacheKey);
+  if (cached) return cached;
+
+  const baseUrl = 'https://desiporn.one';
+  const from = (page - 1) * 30; // site uses offset-based pagination
+  let url;
+  if (searchTerm) {
+    url = from === 0
+      ? `${baseUrl}/search/?q=${encodeURIComponent(searchTerm)}`
+      : `${baseUrl}/search/?q=${encodeURIComponent(searchTerm)}&from=${from}`;
+  } else {
+    url = from === 0 ? baseUrl : `${baseUrl}/most-popular/?from=${from}`;
+  }
+
+  try {
+    await ensureClearance(baseUrl);
+    const res = await axiosGetWithRetry(url, { headers: getRequestHeaders(baseUrl) });
+    const $ = cheerio.load(res.data);
+    const posts = [];
+
+    $('div.item').each((_, el) => {
+      const a = $(el).find('a[href*="/videos/"]').first();
+      const title = a.attr('title') || a.find('strong.title').text().trim();
+      const href = a.attr('href');
+      const imgSrc = a.find('img.thumb').attr('data-original') || a.find('img.thumb').attr('src');
+
+      if (title && href) {
+        posts.push({
+          title,
+          url: normalizeUrl(href, baseUrl),
+          thumbnail: normalizeUrl(imgSrc, baseUrl),
+          siteName: 'DesiPorn',
+          siteBaseUrl: baseUrl
+        });
+      }
+    });
+
+    const uniquePosts = [];
+    const urls = new Set();
+    for (const post of posts) {
+      if (!urls.has(post.url)) {
+        urls.add(post.url);
+        uniquePosts.push(post);
+      }
+      if (uniquePosts.length >= limit) break;
+    }
+
+    // Resolve each post page to extract direct video URL
+    const resolvedPosts = await Promise.all(
+      uniquePosts.map(async (post) => {
+        try {
+          const postRes = await axiosGetWithRetry(post.url, { headers: getRequestHeaders(baseUrl) });
+          const post$ = cheerio.load(postRes.data);
+
+          // DesiPorn stores the MP4 in a <source> inside <video> or og:video
+          let videoUrl = post$('video source[src]').attr('src')
+            || post$('video[src]').attr('src')
+            || post$('meta[property="og:video:secure_url"]').attr('content')
+            || post$('meta[property="og:video"]').attr('content');
+
+          post.videoUrl = normalizeUrl(videoUrl, baseUrl);
+          if (!post.thumbnail) {
+            post.thumbnail = post$('meta[property="og:image"]').attr('content');
+          }
+          return post;
+        } catch (_) {
+          return post;
+        }
+      })
+    );
+
+    const validPosts = resolvedPosts.filter(p => p.videoUrl);
+    setCached(cacheKey, validPosts);
+    return validPosts;
+  } catch (err) {
+    console.error(`Error scraping DesiPorn (Page ${page}, Search: ${searchTerm}):`, err.message);
+    return [];
+  }
+}
+
+/**
  * Scrapes Viralmms.com
  */
 async function scrapeViralMms(page = 1, limit = 10) {
@@ -851,6 +937,7 @@ export {
   normalizeUrl,
   getRequestHeaders,
   ensureClearance,
+  scrapeDesiPorn,
   scrapeViralMms,
   scrapeDesiSexVdo,
   scrapeDesiBabe,
