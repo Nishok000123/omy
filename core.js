@@ -498,7 +498,9 @@ async function handleScrapeAction(ctx, siteName, page, scrapeFn, tag = '', query
   const statusMsg = await ctx.replyWithMarkdown(`🔍 _Fetching ${actionLabel.toLowerCase()} from *${siteName}*..._`).catch(() => {});
 
   try {
+    console.log(`[Scrape] ${siteName} page ${page}${tag ? ' tag=' + tag : ''} start`);
     const posts = tag ? await scrapeFn(page, tag) : await scrapeFn(page);
+    console.log(`[Scrape] ${siteName} returned ${posts?.length || 0} posts`);
     
     if (!posts || posts.length === 0) {
       if (statusMsg) {
