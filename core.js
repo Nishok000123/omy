@@ -16,6 +16,7 @@ import {
   getRequestHeaders,
   ensureClearance
 } from './scraper.js';
+import { getFavorites, saveFavorite, removeFavorite, clearFavorites } from './favorites.js';
 
 // ---------------------------------------------------------------------------
 // downloadVideo – streams a remote video to a temp file using the same
@@ -90,11 +91,14 @@ const TAG_LABELS = {
 };
 
 const HELP_TEXT = `📖 *Usage Instructions*:\n\n` +
-  `1. Click on any site button to open the page selector.\n` +
+  `1. Click any site button to open the page selector.\n` +
   `2. Select a quick tag directly from the front menu.\n` +
-  `3. Or, **type any search word** (e.g. \`bhabhi\`) and send it to search the supported sites!\n` +
-  `4. Toggle the **Auto-Delete Timer** between Off, 15 Min, or 30 Min to automatically wipe media from the chat.\n` +
-  `5. At the bottom of the last post, use pagination controls to scroll pages.\n\n` +
+  `3. **Type any word** (e.g. \`bhabhi\`) to search across all sites!\n` +
+  `4. **Type a #hashtag** (e.g. \`#tamil\`, \`#mallu\`) for tag search.\n` +
+  `5. Press 💾 *Save* under any video to bookmark it.\n` +
+  `6. Use /favorites to view your saved videos.\n` +
+  `7. Toggle *Auto-Delete Timer* (Off / 15 Min / 30 Min) to auto-wipe media.\n` +
+  `8. Use pagination controls at the bottom of results to browse pages.\n\n` +
   `Use /start to open the main menu.`;
 
 // In-memory store for chat settings (default to 15 minutes auto-delete)
@@ -249,6 +253,9 @@ function getPaginationKeyboard(siteKey, page, tag = '', queryId = '', videoUrl =
       Markup.button.url('🎥 Watch Direct Video', videoUrl),
       Markup.button.callback('⬇️ Download to Telegram', `dl_${shortId}`)
     ]);
+    buttons.push([
+      Markup.button.callback('🎬 Video Preview', `vn_${shortId}`)
+    ]);
   }
 
   // Navigation row
@@ -386,6 +393,35 @@ bot.on('text', async (ctx) => {
   const text = ctx.message.text.trim();
   if (!text) return;
 
+  // ── Hashtag / free-form tag search (#tamil, #mallu, #bhabhi etc.) ───────
+  if (text.startsWith('#')) {
+    const tag = text.slice(1).trim().toLowerCase().replace(/\s+/g, '_');
+    if (!tag) return;
+
+    const tagLabel = TAG_LABELS[tag] || text.slice(1).trim(); // Use display label if predefined
+
+    // Check if it's a predefined tag key first
+    const tagKey = TAG_LABELS[tag] ? tag : tag.replace(/\s+/g, '_');
+
+    const responseText = `🏷️ *Tag search: "${tagLabel}"*\n\nSelect which site to search on:`;
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('🔍 Combined Search (All Sites)', `search_all_${tagKey}_1`)],
+      [
+        Markup.button.callback('DesiPorn 🔥', `search_desiporn_${tagKey}_1`),
+        Markup.button.callback('DesiSexVdo 🎥', `search_desisexvdo_${tagKey}_1`)
+      ],
+      [
+        Markup.button.callback('DesiBF 💋', `search_desibf_${tagKey}_1`),
+        Markup.button.callback('DesiLeak49 💦', `search_desileak49_${tagKey}_1`),
+        Markup.button.callback('MastiRaja 🍿', `search_mastiraja_${tagKey}_1`)
+      ],
+      [Markup.button.callback('🔙 Back to Main Menu', 'back_to_main')]
+    ]);
+
+    await ctx.replyWithMarkdown(responseText, keyboard).catch(() => {});
+    return;
+  }
+
   queryCounter++;
   const queryId = `q${queryCounter}`;
   customQueries[queryId] = text;
@@ -475,10 +511,19 @@ async function handleScrapeAction(ctx, siteName, page, scrapeFn, tag = '', query
       let keyboard = null;
       if (post.videoUrl) {
         const shortId = getShortVideoId(post.videoUrl);
+        // Store post data for Save action (encode url as base-safe ID)
+        const saveId = getShortVideoId(post.url || post.videoUrl); // reuse map
+        videoDownloadUrls.set(`save_${saveId}`, JSON.stringify({ title: post.title, url: post.url, videoUrl: post.videoUrl, siteName: post.siteName || siteName }));
         keyboard = Markup.inlineKeyboard([
           [
             Markup.button.url('🎥 Watch Direct Video', post.videoUrl),
             Markup.button.callback('⬇️ Download to Telegram', `dl_${shortId}`)
+          ],
+          [
+            Markup.button.callback('💾 Save', `save_${saveId}`)
+          ],
+          [
+            Markup.button.callback('🎬 Video Preview', `vn_${shortId}`)
           ]
         ]);
       }
@@ -655,6 +700,9 @@ bot.action(new RegExp('^search_(' + validSitesPattern + ')_(.+)_(\\d+)$'), async
   if (siteKey === 'all') {
     siteName = 'All Sites';
     scrapeFn = searchAllSites;
+  } else if (siteKey === 'desiporn') {
+    siteName = 'DesiPorn';
+    scrapeFn = scrapeDesiPorn;
   } else if (siteKey === 'desisexvdo') {
     siteName = 'DesiSexVdo';
     scrapeFn = scrapeDesiSexVdo;
@@ -669,7 +717,7 @@ bot.action(new RegExp('^search_(' + validSitesPattern + ')_(.+)_(\\d+)$'), async
     scrapeFn = scrapeMastiRaja;
   }
 
-  const tagLabel = TAG_LABELS[tagKey] || tagKey;
+  const tagLabel = TAG_LABELS[tagKey] || tagKey.replace(/_/g, ' ');
 
   if (scrapeFn) {
     await handleScrapeAction(ctx, siteName, page, scrapeFn, tagLabel);
@@ -696,9 +744,9 @@ bot.action(new RegExp('^csearch_(' + validSitesPattern + ')_(.+)_(\\d+)$'), asyn
   if (siteKey === 'all') {
     siteName = 'All Sites';
     scrapeFn = searchAllSites;
-  } else if (siteKey === 'kamaclips') {
-    siteName = 'KamaClips';
-    scrapeFn = scrapeKamaClips;
+  } else if (siteKey === 'desiporn') {
+    siteName = 'DesiPorn';
+    scrapeFn = scrapeDesiPorn;
   } else if (siteKey === 'desisexvdo') {
     siteName = 'DesiSexVdo';
     scrapeFn = scrapeDesiSexVdo;
@@ -720,6 +768,7 @@ bot.action(new RegExp('^csearch_(' + validSitesPattern + ')_(.+)_(\\d+)$'), asyn
   }
 });
 
+// ─── Download handler ─────────────────────────────────────────────────────────
 bot.action(/^dl_(v\d+)$/, async (ctx) => {
   const shortId = ctx.match[1];
   const videoUrl = videoDownloadUrls.get(shortId);
@@ -758,6 +807,121 @@ bot.action(/^dl_(v\d+)$/, async (ctx) => {
   }
 });
 
+// ─── Video Note preview handler ──────────────────────────────────────────────
+bot.action(/^vn_(v\d+)$/, async (ctx) => {
+  const shortId = ctx.match[1];
+  const videoUrl = videoDownloadUrls.get(shortId);
+
+  if (!videoUrl) {
+    return ctx.answerCbQuery('Preview link expired. Please search again.').catch(() => {});
+  }
+
+  await ctx.answerCbQuery('🎬 Loading preview...').catch(() => {});
+  const statusMsg = await ctx.replyWithMarkdown('⏳ _Loading video preview..._').catch(() => {});
+
+  let tmpPath = null;
+  try {
+    let siteBaseUrl;
+    try { siteBaseUrl = new URL(videoUrl).origin; } catch (_) { siteBaseUrl = ''; }
+
+    tmpPath = await downloadVideo(videoUrl, siteBaseUrl);
+
+    await ctx.telegram.sendVideoNote(ctx.chat.id, { source: fs.createReadStream(tmpPath) });
+
+    if (statusMsg) await ctx.telegram.deleteMessage(ctx.chat.id, statusMsg.message_id).catch(() => {});
+  } catch (error) {
+    console.error('Error sending video note:', error.message);
+    if (statusMsg) {
+      try {
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          statusMsg.message_id,
+          null,
+          `❌ *Could not load preview.*\n_Reason: ${error.message}_`,
+          { parse_mode: 'Markdown' }
+        );
+      } catch (_) {}
+    }
+  } finally {
+    if (tmpPath) {
+      try { fs.unlinkSync(tmpPath); } catch (_) {}
+    }
+  }
+});
+
 bot.action('noop', (ctx) => ctx.answerCbQuery().catch(() => {}));
+
+// ─── Save / Unsave handlers ───────────────────────────────────────────────────
+bot.action(/^save_(v\d+)$/, async (ctx) => {
+  const saveId = ctx.match[1];
+  const rawData = videoDownloadUrls.get(`save_${saveId}`);
+  if (!rawData) {
+    return ctx.answerCbQuery('❌ Save data expired. Please search again.').catch(() => {});
+  }
+  try {
+    const item = JSON.parse(rawData);
+    const added = saveFavorite(ctx.from.id, item);
+    if (added) {
+      await ctx.answerCbQuery('💾 Saved to your favorites!').catch(() => {});
+    } else {
+      await ctx.answerCbQuery('⚠️ Already in your favorites.').catch(() => {});
+    }
+  } catch (err) {
+    await ctx.answerCbQuery('❌ Could not save.').catch(() => {});
+  }
+});
+
+// ─── /favorites command ───────────────────────────────────────────────────────
+bot.command('favorites', async (ctx) => {
+  const items = getFavorites(ctx.from.id);
+  if (items.length === 0) {
+    await ctx.replyWithMarkdown('📭 *Your favorites list is empty.*\n\nUse the 💾 Save button under any video to bookmark it!', getMainMenu(ctx.chat.id)).catch(() => {});
+    return;
+  }
+
+  await ctx.replyWithMarkdown(`💾 *Your Saved Videos (${items.length})*\n\nHere are your bookmarked videos:`);
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const caption = `💾 *${i + 1}. ${item.title}*\n` +
+      `🌐 _${item.siteName || 'Unknown'}_\n` +
+      `📅 _Saved: ${new Date(item.savedAt).toLocaleDateString('en-IN')}_\n\n` +
+      (item.videoUrl ? `[▶️ Watch Video](${item.videoUrl})` : `[🔗 View Post](${item.url})`);
+
+    const keyboard = Markup.inlineKeyboard([
+      item.videoUrl ? [Markup.button.url('🎥 Watch', item.videoUrl)] : [],
+      [Markup.button.callback('🗑️ Remove', `unsave_${i}_${ctx.from.id}`)]
+    ].filter(r => r.length > 0));
+
+    await ctx.replyWithMarkdown(caption, keyboard).catch(() => {});
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  await ctx.replyWithMarkdown(
+    `_Tip: Use /clearfavorites to remove all saved videos._`,
+    getMainMenu(ctx.chat.id)
+  ).catch(() => {});
+});
+
+bot.action(/^unsave_(\d+)_(\d+)$/, async (ctx) => {
+  const index = parseInt(ctx.match[1], 10);
+  const userId = ctx.match[2];
+  if (String(ctx.from.id) !== userId) {
+    return ctx.answerCbQuery('❌ Not your favorites.').catch(() => {});
+  }
+  const items = getFavorites(ctx.from.id);
+  const item = items[index];
+  if (!item) {
+    return ctx.answerCbQuery('❌ Item not found.').catch(() => {});
+  }
+  removeFavorite(ctx.from.id, item.url);
+  await ctx.answerCbQuery('🗑️ Removed from favorites.').catch(() => {});
+  await ctx.deleteMessage().catch(() => {});
+});
+
+bot.command('clearfavorites', async (ctx) => {
+  clearFavorites(ctx.from.id);
+  await ctx.replyWithMarkdown('🗑️ *All favorites cleared.*', getMainMenu(ctx.chat.id)).catch(() => {});
+});
 
 export { bot, customQueries, getShortVideoId, videoDownloadUrls };
