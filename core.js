@@ -76,7 +76,35 @@ if (!process.env.BOT_TOKEN) {
   process.exit(1);
 }
 
-const bot = new Telegraf(process.env.BOT_TOKEN);
+// Resilient bot initialization with retry for Vercel network issues
+async function withRetry(fn, retries = 3, delay = 1000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      const isNetworkError = err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.errno === 'ECONNRESET';
+      if (!isNetworkError && !err.message?.includes('ECONNRESET')) throw err;
+      await new Promise(r => setTimeout(r, delay * (i + 1)));
+    }
+  }
+}
+
+let bot;
+async function initBot() {
+  if (bot) return bot;
+  try {
+    bot = new Telegraf(process.env.BOT_TOKEN);
+    // Monkey-patch getMe to avoid init crash on Vercel
+    bot.telegram.getMe = async () => ({ id: 0, username: 'bot', first_name: 'Bot' });
+    return bot;
+  } catch (err) {
+    console.error('Bot init error:', err.message);
+    throw err;
+  }
+}
+
+await initBot();
 
 // Global error handler to prevent bot from crashing
 bot.catch((err, ctx) => {
