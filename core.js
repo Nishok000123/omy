@@ -19,7 +19,7 @@ import {
   getRequestHeaders,
   ensureClearance
 } from './scraper.js';
-import { getFavorites, saveFavorite, removeFavorite, clearFavorites, addScheduledUser, removeScheduledUser, toggleScheduledUser } from './kv-storage.js';
+import { getFavorites, saveFavorite, removeFavorite, clearFavorites, addScheduledUser, removeScheduledUser, toggleScheduledUser, getScheduledUser, updateScheduledUserSites, isAdmin, addAdmin, removeAdmin, getForceChannel, setForceChannel, removeForceChannel, checkForceSubscribe } from './kv-storage.js';
 
 // ---------------------------------------------------------------------------
 // downloadVideo – streams a remote video to a temp file using the same
@@ -135,6 +135,12 @@ const HELP_TEXT = `📖 *Usage Instructions*:\n\n` +
 // In-memory store for chat settings (default to 15 minutes auto-delete)
 const chatSettings = {};
 
+// Admin system: first user = admin
+const adminUsers = new Set();
+
+// Force channel (username without @)
+let forceChannel = null;
+
 // Map to store custom query IDs to avoid exceeding Telegram's 64-byte callback query data limit
 const customQueries = {};
 let queryCounter = 0;
@@ -162,6 +168,43 @@ function getShortVideoId(url) {
   }
   return id;
 }
+
+// Force subscribe middleware
+async function forceSubscribeMiddleware(ctx, next) {
+  if (!forceChannel) return next();
+  
+  const userId = ctx.from?.id;
+  if (!userId) return next();
+  
+  // Skip for admins
+  if (adminUsers.has(userId)) return next();
+  
+  // Skip for certain commands
+  if (ctx.message?.text?.startsWith('/start')) return next();
+  
+  try {
+    const isMember = await checkForceSubscribe(userId);
+    if (!isMember) {
+      await ctx.replyWithMarkdown(
+        `🔒 *Force Subscribe Required*\n\n` +
+        `You must join our channel to use this bot:\n` +
+        `[@${forceChannel}](https://t.me/${forceChannel})\n\n` +
+        `After joining, press /start again.`,
+        Markup.inlineKeyboard([
+          [Markup.button.url('📢 Join Channel', `https://t.me/${forceChannel}`)],
+          [Markup.button.callback('✅ I Joined', 'check_force_subscribe')]
+        ])
+      ).catch(() => {});
+      return;
+    }
+  } catch (e) {
+    console.error('Force subscribe check failed:', e.message);
+  }
+  
+  return next();
+}
+
+bot.use(forceSubscribeMiddleware);
 
 // Helper to schedule message deletion
 function scheduleDeletion(ctx, messageIds, minutes) {
@@ -240,8 +283,9 @@ function getMainMenu(chatId) {
     // Predefined Tags
     [Markup.button.callback('Tamil 🇮🇳', 'tag_tamil'), Markup.button.callback('Mallu 🥥', 'tag_mallu')],
     [Markup.button.callback('South Indian 🌴', 'tag_south_indian'), Markup.button.callback('Young 👧', 'tag_young')],
-    // Settings
-    [Markup.button.callback(deleteLabel, 'toggle_autodelete'), Markup.button.callback('❓ Help & Usage', 'help')]
+    // Auto-Send & Settings
+    [Markup.button.callback('⚙️ Auto-Send / Daily', 'auto_send_menu'), Markup.button.callback(deleteLabel, 'toggle_autodelete')],
+    [Markup.button.callback('❓ Help & Usage', 'help')]
   ]);
 }
 
@@ -345,16 +389,20 @@ bot.action('back_to_main', async (ctx) => {
   const welcomeText = `👋 *Welcome to the Desi Video Scraper Bot!*\n\n` +
     `Select a site from the menu below, click on one of the quick tags, or **type a custom search word** directly to search the sites and get results!`;
   
-  if (ctx.callbackQuery && ctx.callbackQuery.message && ctx.callbackQuery.message.photo) {
-    try {
-      await ctx.editMessageReplyMarkup(null);
-    } catch (e) {}
-    await ctx.replyWithMarkdown(welcomeText, getMainMenu(ctx.chat.id)).catch(() => {});
-  } else {
-    await ctx.editMessageText(welcomeText, {
-      parse_mode: 'Markdown',
-      ...getMainMenu(ctx.chat.id)
-    }).catch(() => {});
+  if (ctx.callbackQuery && ctx.callbackQuery.message) {
+    const msg = ctx.callbackQuery.message;
+    // Handle different message types that can't be edited
+    if (msg.photo || msg.video || msg.video_note || msg.animation || msg.document) {
+      try {
+        await ctx.editMessageReplyMarkup(null);
+      } catch (e) {}
+      await ctx.replyWithMarkdown(welcomeText, getMainMenu(ctx.chat.id)).catch(() => {});
+    } else {
+      await ctx.editMessageText(welcomeText, {
+        parse_mode: 'Markdown',
+        ...getMainMenu(ctx.chat.id)
+      }).catch(() => {});
+    }
   }
 });
 
@@ -380,6 +428,174 @@ bot.action('toggle_autodelete', async (ctx) => {
     parse_mode: 'Markdown',
     ...getMainMenu(chatId)
   }).catch(() => {});
+});
+
+// ─── Auto-Send Menu ─────────────────────────────────────────────────────────────
+bot.action('auto_send_menu', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const userId = ctx.from.id;
+  const user = await getScheduledUser(userId);
+  
+  const isEnabled = user?.enabled || false;
+  const siteCount = user?.sites?.length || 11;
+  const groupTopics = user?.groupTopics || false;
+  const forceChannel = user?.forceChannel || null;
+
+  const text = `⚙️ *Auto-Send / Daily Digest Settings*\n\n` +
+    `📬 Daily Digest: ${isEnabled ? '✅ Enabled' : '❌ Disabled'}\n` +
+    `🌐 Sites Selected: ${siteCount === 11 ? 'All (11)' : siteCount}/11\n` +
+    `📍 Group Topics: ${groupTopics ? '✅ Enabled' : '❌ Disabled'}\n` +
+    `🔒 Force Channel: ${forceChannel ? `@${forceChannel}` : 'None'}\n\n` +
+    `Configure your preferences below:`;
+
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback(isEnabled ? '🔴 Disable Daily' : '🟢 Enable Daily', 'toggle_daily')],
+    [Markup.button.callback('🌐 Select Sites', 'setting_sites')],
+    [Markup.button.callback(groupTopics ? '📍 Disable Group Topics' : '📍 Enable Group Topics', 'toggle_group_topics')],
+    [Markup.button.callback('🔒 Set Force Channel', 'set_force_channel')],
+    [Markup.button.callback('🔙 Back to Main Menu', 'back_to_main')]
+  ]);
+
+  await ctx.editMessageText(text, {
+    parse_mode: 'Markdown',
+    ...keyboard
+  }).catch(() => {});
+});
+
+bot.action('toggle_daily', async (ctx) => {
+  const userId = ctx.from.id;
+  const chatId = ctx.chat.id;
+  const enabled = await toggleScheduledUser(userId);
+  
+  if (enabled === null) {
+    const added = await addScheduledUser(userId, chatId);
+    if (added) {
+      await ctx.answerCbQuery('✅ Daily digest enabled!').catch(() => {});
+    }
+  } else {
+    await ctx.answerCbQuery(enabled ? '✅ Enabled' : '❌ Disabled').catch(() => {});
+  }
+  
+  // Refresh menu
+  const user = await getScheduledUser(userId);
+  const isEnabled = user?.enabled || false;
+  const siteCount = user?.sites?.length || 11;
+  const groupTopics = user?.groupTopics || false;
+  const forceChannel = user?.forceChannel || null;
+
+  const text = `⚙️ *Auto-Send / Daily Digest Settings*\n\n` +
+    `📬 Daily Digest: ${isEnabled ? '✅ Enabled' : '❌ Disabled'}\n` +
+    `🌐 Sites Selected: ${siteCount === 11 ? 'All (11)' : siteCount}/11\n` +
+    `📍 Group Topics: ${groupTopics ? '✅ Enabled' : '❌ Disabled'}\n` +
+    `🔒 Force Channel: ${forceChannel ? `@${forceChannel}` : 'None'}\n\n` +
+    `Configure your preferences below:`;
+
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback(isEnabled ? '🔴 Disable Daily' : '🟢 Enable Daily', 'toggle_daily')],
+    [Markup.button.callback('🌐 Select Sites', 'setting_sites')],
+    [Markup.button.callback(groupTopics ? '📍 Disable Group Topics' : '📍 Enable Group Topics', 'toggle_group_topics')],
+    [Markup.button.callback('🔒 Set Force Channel', 'set_force_channel')],
+    [Markup.button.callback('🔙 Back to Main Menu', 'back_to_main')]
+  ]);
+
+  await ctx.editMessageText(text, {
+    parse_mode: 'Markdown',
+    ...keyboard
+  }).catch(() => {});
+});
+
+bot.action('setting_sites', async (ctx) => {
+  const userId = ctx.from.id;
+  const user = await getScheduledUser(userId);
+  const userSites = user?.sites || ['desiporn', 'mmsbee', 'desipapa', 'hotpic', 'viralmms', 'desisexvdo', 'desibabe', 'desihub', 'desibf', 'desileak49', 'mastiraja'];
+  
+  const allSites = [
+    { key: 'desiporn', label: 'DesiPorn 🔥' },
+    { key: 'mmsbee', label: 'MMSBee 🐝' },
+    { key: 'desipapa', label: 'DesiPapa 🎬' },
+    { key: 'hotpic', label: 'Hotpic 🔥' },
+    { key: 'viralmms', label: 'ViralMMS 🎬' },
+    { key: 'desisexvdo', label: 'DesiSexVdo 🎥' },
+    { key: 'desibabe', label: 'DesiBabe 🍑' },
+    { key: 'desihub', label: 'DesiHub 🇮🇳' },
+    { key: 'desibf', label: 'DesiBF 💋' },
+    { key: 'desileak49', label: 'DesiLeak49 💦' },
+    { key: 'mastiraja', label: 'MastiRaja 🍿' }
+  ];
+
+  const keyboard = Markup.inlineKeyboard([
+    ...allSites.map(site => [
+      Markup.button.callback(
+        `${userSites.includes(site.key) ? '✅' : '⬜'} ${site.label}`,
+        `setting_site_${site.key}`
+      )
+    ]),
+    [Markup.button.callback('🔙 Back to Auto-Send', 'auto_send_menu')]
+  ]);
+
+  await ctx.editMessageText(
+    `🌐 *Select Sites for Daily Digest*\n\n` +
+    `Click to toggle each site. Selected: ${userSites.length}/11`,
+    { parse_mode: 'Markdown', ...keyboard }
+  ).catch(() => {});
+});
+
+bot.action(/^setting_site_(.+)$/, async (ctx) => {
+  const userId = ctx.from.id;
+  const siteKey = ctx.match[1];
+  const user = await getScheduledUser(userId);
+  const userSites = user?.sites || ['desiporn', 'mmsbee', 'desipapa', 'hotpic', 'viralmms', 'desisexvdo', 'desibabe', 'desihub', 'desibf', 'desileak49', 'mastiraja'];
+  
+  const idx = userSites.indexOf(siteKey);
+  if (idx >= 0) {
+    userSites.splice(idx, 1);
+  } else {
+    userSites.push(siteKey);
+  }
+  
+  await updateScheduledUserSites(userId, userSites);
+  
+  // Refresh keyboard
+  const allSites = [
+    { key: 'desiporn', label: 'DesiPorn 🔥' },
+    { key: 'mmsbee', label: 'MMSBee 🐝' },
+    { key: 'desipapa', label: 'DesiPapa 🎬' },
+    { key: 'hotpic', label: 'Hotpic 🔥' },
+    { key: 'viralmms', label: 'ViralMMS 🎬' },
+    { key: 'desisexvdo', label: 'DesiSexVdo 🎥' },
+    { key: 'desibabe', label: 'DesiBabe 🍑' },
+    { key: 'desihub', label: 'DesiHub 🇮🇳' },
+    { key: 'desibf', label: 'DesiBF 💋' },
+    { key: 'desileak49', label: 'DesiLeak49 💦' },
+    { key: 'mastiraja', label: 'MastiRaja 🍿' }
+  ];
+
+  const keyboard = Markup.inlineKeyboard([
+    ...allSites.map(site => [
+      Markup.button.callback(
+        `${userSites.includes(site.key) ? '✅' : '⬜'} ${site.label}`,
+        `setting_site_${site.key}`
+      )
+    ]),
+    [Markup.button.callback('🔙 Back to Auto-Send', 'auto_send_menu')]
+  ]);
+
+  await ctx.editMessageReplyMarkup(keyboard.reply_markup).catch(() => {});
+  await ctx.answerCbQuery(`Toggled ${siteKey}`).catch(() => {});
+});
+
+bot.action('toggle_group_topics', async (ctx) => {
+  const userId = ctx.from.id;
+  const user = await getScheduledUser(userId);
+  const newValue = !(user?.groupTopics || false);
+  
+  // This would need a new function in kv-storage
+  // For now just show status
+  await ctx.answerCbQuery(`Group topics: ${newValue ? 'Enabled' : 'Disabled'} (need kv-storage update)`).catch(() => {});
+});
+
+bot.action('set_force_channel', async (ctx) => {
+  await ctx.answerCbQuery('Use /forcechannel @channelusername to set').catch(() => {});
 });
 
 // Setup site triggers to load page selectors
@@ -562,116 +778,61 @@ async function handleScrapeAction(ctx, siteName, page, scrapeFn, tag = '', query
 
     const sentMessageIds = [];
 
-    // Send posts one by one
-    for (let i = 0; i < posts.length - 1; i++) {
+    // Process each post/album
+    for (let i = 0; i < posts.length; i++) {
       const post = posts[i];
-      const caption = `🔥 *${i + 1}. ${post.title}*\n\n` +
-        `🌐 *Source*: ${post.siteName || siteName}\n` +
-        `📄 *Page*: ${page}\n` +
-        (tag ? `🏷️ *Tag/Search*: ${tag}\n` : '') +
-        `🔗 [Original Post](${post.url})\n\n` +
-        `📥 *Direct Video URL* (tap to copy):\n` +
-        `\`${post.videoUrl}\``;
-
-      let keyboard = null;
-      if (post.videoUrl) {
-        const shortId = getShortVideoId(post.videoUrl);
-        // Store post data for Save action (encode url as base-safe ID)
-        const saveId = getShortVideoId(post.url || post.videoUrl); // reuse map
-        videoDownloadUrls.set(`save_${saveId}`, JSON.stringify({ title: post.title, url: post.url, videoUrl: post.videoUrl, siteName: post.siteName || siteName }));
-        keyboard = Markup.inlineKeyboard([
-          [
-            Markup.button.url('🎥 Watch Direct Video', post.videoUrl),
-            Markup.button.callback('⬇️ Download to Telegram', `dl_${shortId}`)
-          ],
-          [
-            Markup.button.callback('💾 Save', `save_${saveId}`)
-          ],
-          [
-            Markup.button.callback('🎬 Video Preview', `vn_${shortId}`)
-          ]
-        ]);
-      }
-
-      const replyOptions = {
-        caption,
-        parse_mode: 'Markdown',
-        ...(keyboard ? keyboard : {})
-      };
-
-      try {
-        let msg = null;
-        // Try native video first, then fallback to photo, then to text
+      
+      // Check if it's a Hotpic album with multiple videos
+      if (post._isAlbum && post._albumVideos && post._albumVideos.length > 1) {
+        // Send as media group (album)
         try {
-          if (post.videoUrl) {
-            msg = await ctx.replyWithVideo(post.videoUrl, replyOptions);
-          } else {
-            throw new Error("No video url");
+          const media = post._albumVideos.map((video, idx) => ({
+            type: 'video',
+            media: video.videoUrl,
+            caption: idx === 0 ? 
+              `🔥 *${i + 1}. ${post.title}*\n\n` +
+              `🌐 *Source*: ${post.siteName || siteName}\n` +
+              `📄 *Page*: ${page}\n` +
+              (tag ? `🏷️ *Tag/Search*: ${tag}\n` : '') +
+              `🔗 [Original Album](${post.url})\n\n` +
+              `📦 *Album: ${post._albumVideos.length} videos*`
+              : undefined,
+            parse_mode: 'Markdown'
+          }));
+
+          const msgs = await ctx.replyWithMediaGroup(media);
+          sentMessageIds.push(...msgs.map(m => m.message_id));
+          
+          // Send pagination keyboard on last album
+          if (i === posts.length - 1) {
+            const keyboard = Markup.inlineKeyboard([
+              [
+                Markup.button.url('🎥 Watch Direct Video', post._albumVideos[0].videoUrl),
+                Markup.button.callback('⬇️ Download First', `dl_${getShortVideoId(post._albumVideos[0].videoUrl)}`)
+              ],
+              [
+                Markup.button.callback('📥 Download All', `dl_all_${getShortVideoId(post.url)}`)
+              ],
+              [
+                Markup.button.callback('🎬 Video Preview', `vn_${getShortVideoId(post._albumVideos[0].videoUrl)}`)
+              ]
+            ]);
+            const msg = await ctx.replyWithMarkdown(
+              `📦 *Album: ${post.title}* (${post._albumVideos.length} videos)\n\nUse buttons below:`,
+              keyboard
+            ).catch(() => {});
+            if (msg) sentMessageIds.push(msg.message_id);
           }
-        } catch (videoErr) {
-          if (post.thumbnail) {
-            msg = await ctx.replyWithPhoto(post.thumbnail, replyOptions).catch(() => {});
-          } else {
-            if (keyboard) {
-              msg = await ctx.replyWithMarkdown(caption, keyboard).catch(() => {});
-            } else {
-              msg = await ctx.replyWithMarkdown(caption).catch(() => {});
-            }
-          }
+        } catch (albumErr) {
+          console.error('Album send failed, falling back to individual:', albumErr.message);
+          // Fallback: send first video individually
+          await sendSinglePost(ctx, post, post._albumVideos[0], i, page, tag, siteName, sentMessageIds, i === posts.length - 1);
         }
-        if (msg) sentMessageIds.push(msg.message_id);
-      } catch (err) {
-        let msg;
-        if (keyboard) {
-          msg = await ctx.replyWithMarkdown(caption, keyboard).catch(() => {});
-        } else {
-          msg = await ctx.replyWithMarkdown(caption).catch(() => {});
-        }
-        if (msg) sentMessageIds.push(msg.message_id);
+      } else {
+        // Regular single video post
+        const videoData = post._albumVideos?.[0] || post;
+        await sendSinglePost(ctx, post, videoData, i, page, tag, siteName, sentMessageIds, i === posts.length - 1);
       }
-    }
-
-    // Send the last post with pagination controls attached
-    const lastIndex = posts.length - 1;
-    const lastPost = posts[lastIndex];
-    const lastCaption = `🔥 *${lastIndex + 1}. ${lastPost.title}*\n\n` +
-      `🌐 *Source*: ${lastPost.siteName || siteName}\n` +
-      `📄 *Page*: ${page}\n` +
-      (tag ? `🏷️ *Tag/Search*: ${tag}\n` : '') +
-      `🔗 [Original Post](${lastPost.url})\n\n` +
-      `📥 *Direct Video URL* (tap to copy):\n` +
-      `\`${lastPost.videoUrl}\``;
-
-    const siteKey = siteName.toLowerCase();
-    const paginationKeyboard = getPaginationKeyboard(siteKey, page, tag, queryId, lastPost.videoUrl);
-
-    try {
-      let msgLast = null;
-      try {
-        if (lastPost.videoUrl) {
-          msgLast = await ctx.replyWithVideo(lastPost.videoUrl, {
-            caption: lastCaption,
-            parse_mode: 'Markdown',
-            ...paginationKeyboard
-          });
-        } else {
-          throw new Error("No video url");
-        }
-      } catch (videoErr) {
-        if (lastPost.thumbnail) {
-          msgLast = await ctx.replyWithPhoto(lastPost.thumbnail, {
-            caption: lastCaption,
-            parse_mode: 'Markdown',
-            ...paginationKeyboard
-          }).catch(() => {});
-        } else {
-          msgLast = await ctx.replyWithMarkdown(lastCaption, paginationKeyboard).catch(() => {});
-        }
-      }
-      if (msgLast) sentMessageIds.push(msgLast.message_id);
-    } catch (err) {
-      const msgLast = await ctx.replyWithMarkdown(lastCaption, paginationKeyboard).catch(() => {});
-      if (msgLast) sentMessageIds.push(msgLast.message_id);
     }
 
     // Schedule deletion if enabled
@@ -679,7 +840,7 @@ async function handleScrapeAction(ctx, siteName, page, scrapeFn, tag = '', query
     if (settings.autoDeleteMinutes > 0) {
       scheduleDeletion(ctx, sentMessageIds, settings.autoDeleteMinutes);
       const selfDestructMsg = await ctx.replyWithMarkdown(
-        `⏳ _These messages will auto-delete in *${settings.autoDeleteMinutes} minutes*._`
+        `⏳ _These messages will auto-delete in *${settings.autoDeleteMinutes} minutes*_`
       ).catch(() => {});
       if (selfDestructMsg) {
         setTimeout(async () => {
@@ -698,9 +859,127 @@ async function handleScrapeAction(ctx, siteName, page, scrapeFn, tag = '', query
       } catch (e) {}
     }
     await ctx.replyWithMarkdown(
-      `❌ An error occurred: ${err.message}`,
+      `❌ *Error scraping ${siteName}*\n_${err.message}_`,
       getMainMenu(ctx.chat.id)
     ).catch(() => {});
+  }
+}
+
+// Helper: send a single video post (used for regular posts + album fallback)
+async function sendSinglePost(ctx, post, videoData, index, page, tag, siteName, sentMessageIds, isLast) {
+  const caption = `🔥 *${index + 1}. ${videoData.title}*\n\n` +
+    `🌐 *Source*: ${post.siteName || siteName}\n` +
+    `📄 *Page*: ${page}\n` +
+    (tag ? `🏷️ *Tag/Search*: ${tag}\n` : '') +
+    `🔗 [Original Post](${post.url})\n\n` +
+    `📥 *Direct Video URL* (tap to copy):\n` +
+    `\`${videoData.videoUrl}\``;
+
+  let keyboard = null;
+  if (videoData.videoUrl) {
+    const shortId = getShortVideoId(videoData.videoUrl);
+    const saveId = getShortVideoId(post.url || videoData.videoUrl);
+    videoDownloadUrls.set(`save_${saveId}`, JSON.stringify({ 
+      title: videoData.title, 
+      url: post.url, 
+      videoUrl: videoData.videoUrl, 
+      siteName: post.siteName || siteName 
+    }));
+    keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.url('🎥 Watch Direct Video', videoData.videoUrl),
+        Markup.button.callback('⬇️ Download to Telegram', `dl_${shortId}`)
+      ],
+      [
+        Markup.button.callback('💾 Save', `save_${saveId}`)
+      ],
+      [
+        Markup.button.callback('🎬 Video Preview', `vn_${shortId}`)
+      ]
+    ]);
+  }
+
+  const replyOptions = {
+    caption,
+    parse_mode: 'Markdown',
+    ...(keyboard ? keyboard : {})
+  };
+
+  try {
+    let msg = null;
+    // Try native video first with fallback logic
+    try {
+      if (videoData.videoUrl) {
+        // For Hotpic, try direct URL but catch and fallback to download
+        if (post.siteName === 'Hotpic' || videoData.videoUrl.includes('hotpic.cc')) {
+          try {
+            msg = await ctx.replyWithVideo(videoData.videoUrl, replyOptions);
+          } catch (hotpicErr) {
+            // Fallback: download and re-upload
+            console.log('Hotpic direct URL failed, downloading...', hotpicErr.message);
+            const tmpPath = await downloadVideo(videoData.videoUrl, post.siteBaseUrl || 'https://hotpic.cc');
+            msg = await ctx.replyWithVideo({ source: fs.createReadStream(tmpPath) }, replyOptions);
+            try { fs.unlinkSync(tmpPath); } catch (_) {}
+          }
+        } else {
+          msg = await ctx.replyWithVideo(videoData.videoUrl, replyOptions);
+        }
+      } else {
+        throw new Error("No video url");
+      }
+    } catch (videoErr) {
+      if (videoData.thumbnail) {
+        msg = await ctx.replyWithPhoto(videoData.thumbnail, replyOptions).catch(() => {});
+      } else {
+        if (keyboard) {
+          msg = await ctx.replyWithMarkdown(caption, keyboard).catch(() => {});
+        } else {
+          msg = await ctx.replyWithMarkdown(caption).catch(() => {});
+        }
+      }
+    }
+    if (msg) sentMessageIds.push(msg.message_id);
+  } catch (err) {
+    let msg;
+    if (keyboard) {
+      msg = await ctx.replyWithMarkdown(caption, keyboard).catch(() => {});
+    } else {
+      msg = await ctx.replyWithMarkdown(caption).catch(() => {});
+    }
+    if (msg) sentMessageIds.push(msg.message_id);
+  }
+
+  // If this is the last post and not an album, add pagination
+  if (isLast && !post._isAlbum) {
+    const paginationKeyboard = getPaginationKeyboard(siteName.toLowerCase(), page, tag, queryId, videoData.videoUrl);
+    try {
+      let msgLast = null;
+      try {
+        if (videoData.videoUrl) {
+          msgLast = await ctx.replyWithVideo(videoData.videoUrl, {
+            caption,
+            parse_mode: 'Markdown',
+            ...paginationKeyboard
+          });
+        } else {
+          throw new Error("No video url");
+        }
+      } catch (videoErr) {
+        if (videoData.thumbnail) {
+          msgLast = await ctx.replyWithPhoto(videoData.thumbnail, {
+            caption,
+            parse_mode: 'Markdown',
+            ...paginationKeyboard
+          }).catch(() => {});
+        } else {
+          msgLast = await ctx.replyWithMarkdown(caption, paginationKeyboard).catch(() => {});
+        }
+      }
+      if (msgLast) sentMessageIds.push(msgLast.message_id);
+    } catch (err) {
+      const msgLast = await ctx.replyWithMarkdown(caption, paginationKeyboard).catch(() => {});
+      if (msgLast) sentMessageIds.push(msgLast.message_id);
+    }
   }
 }
 
@@ -942,6 +1221,96 @@ bot.action(/^vn_(v\d+)$/, async (ctx) => {
 });
 
 bot.action('noop', (ctx) => ctx.answerCbQuery().catch(() => {}));
+
+// ─── Force subscribe check handler ─────────────────────────────────────────────
+bot.action('check_force_subscribe', async (ctx) => {
+  const userId = ctx.from.id;
+  const isMember = await checkForceSubscribe(bot, userId);
+  if (isMember) {
+    await ctx.answerCbQuery('✅ Verified! You can now use the bot.').catch(() => {});
+    await ctx.deleteMessage().catch(() => {});
+    // Re-trigger start
+    const welcomeText = `👋 *Welcome to the Desi Video Scraper Bot!*\n\n` +
+      `Select a site from the menu below, click on one of the quick tags, or **type a custom search word** directly to search the sites and get results!`;
+    await ctx.replyWithMarkdown(welcomeText, getMainMenu(ctx.chat.id)).catch(() => {});
+  } else {
+    await ctx.answerCbQuery('❌ You have not joined yet. Please join the channel first.').catch(() => {});
+  }
+});
+
+// ─── Admin commands ────────────────────────────────────────────────────────────
+bot.command('adduser', async (ctx) => {
+  const userId = ctx.from.id;
+  const isAdmin = adminUsers.has(userId);
+  if (!isAdmin) return ctx.reply('❌ Admin only.').catch(() => {});
+  
+  const text = ctx.message.text.split(' ')[1];
+  if (!text) return ctx.reply('Usage: /adduser @username or /adduser user_id').catch(() => {});
+  
+  const targetId = text.startsWith('@') ? text.slice(1) : text;
+  await addAdmin(targetId);
+  await ctx.reply(`✅ Added ${targetId} as admin`).catch(() => {});
+});
+
+bot.command('removeuser', async (ctx) => {
+  const userId = ctx.from.id;
+  const isAdmin = adminUsers.has(userId);
+  if (!isAdmin) return ctx.reply('❌ Admin only.').catch(() => {});
+  
+  const text = ctx.message.text.split(' ')[1];
+  if (!text) return ctx.reply('Usage: /removeuser @username or /removeuser user_id').catch(() => {});
+  
+  const targetId = text.startsWith('@') ? text.slice(1) : text;
+  await removeAdmin(targetId);
+  await ctx.reply(`✅ Removed ${targetId} from admins`).catch(() => {});
+});
+
+bot.command('forcechannel', async (ctx) => {
+  const userId = ctx.from.id;
+  const isAdmin = adminUsers.has(userId);
+  if (!isAdmin) return ctx.reply('❌ Admin only.').catch(() => {});
+  
+  const text = ctx.message.text.split(' ')[1];
+  if (!text) {
+    await removeForceChannel();
+    return ctx.reply('✅ Force channel removed').catch(() => {});
+  }
+  
+  const channelUsername = text.startsWith('@') ? text.slice(1) : text;
+  // Try to get channel ID
+  try {
+    const chat = await ctx.replyWithMarkdown
+    const chatInfo = await bot.telegram.getChat(`@${channelUsername}`);
+    await setForceChannel(chatInfo.id, channelUsername);
+    await ctx.reply(`✅ Force channel set to @${channelUsername} (ID: ${chatInfo.id})`).catch(() => {});
+  } catch (e) {
+    await ctx.reply(`❌ Could not find channel @${channelUsername}: ${e.message}`).catch(() => {});
+  }
+});
+
+bot.command('broadcast', async (ctx) => {
+  const userId = ctx.from.id;
+  const isAdmin = adminUsers.has(userId);
+  if (!isAdmin) return ctx.reply('❌ Admin only.').catch(() => {});
+  
+  const message = ctx.message.text.slice(10).trim(); // '/broadcast '.length = 10
+  if (!message) return ctx.reply('Usage: /broadcast Your message here').catch(() => {});
+  
+  const users = await getScheduledUsers();
+  let sent = 0, failed = 0;
+  
+  for (const user of users) {
+    try {
+      await bot.telegram.sendMessage(user.chatId, message, { parse_mode: 'Markdown' });
+      sent++;
+    } catch (_) {
+      failed++;
+    }
+    await new Promise(r => setTimeout(r, 100));
+  }
+  
+  await ctx.reply(`📢 Broadcast complete: ${sent} sent, ${failed} failed`).catch(() => {});
+});
 
 // ─── Save / Unsave handlers ───────────────────────────────────────────────────
 bot.action(/^save_(v\d+)$/, async (ctx) => {

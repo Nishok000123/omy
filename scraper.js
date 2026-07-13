@@ -1248,25 +1248,29 @@ async function scrapeHotpic(page = 1, limit = 10) {
             return null;
           }
 
-          // Return multiple posts - one per video
-          return uniqueVideoUrls.map((videoUrl, idx) => ({
+          // Return album object with all videos grouped
+          const albumThumbnail = post.thumbnail || post$('meta[property="og:image"]').attr('content')
+            || post$('script[type="application/ld+json"]').first().text().match(/"thumbnailUrl"\s*:\s*"([^"]+)"/)?.[1];
+          
+          return {
             ...post,
-            title: `${post.title} (${idx + 1}/${uniqueVideoUrls.length})`,
-            videoUrl: normalizeUrl(videoUrl, baseUrl),
-            thumbnail: post.thumbnail || post$('meta[property="og:image"]').attr('content')
-              || post$('script[type="application/ld+json"]').first().text().match(/"thumbnailUrl"\s*:\s*"([^"]+)"/)?.[1],
-            _albumUrl: post.url
-          }));
+            _isAlbum: true,
+            _albumVideos: uniqueVideoUrls.map((videoUrl, idx) => ({
+              title: `${post.title} (${idx + 1}/${uniqueVideoUrls.length})`,
+              videoUrl: normalizeUrl(videoUrl, baseUrl),
+              thumbnail: albumThumbnail
+            }))
+          };
         } catch (_) {
           return null;
         }
       })
     );
 
-    // Flatten array of arrays and filter
-    const validPosts = resolvedPosts.flat().filter(p => p && p.videoUrl);
-    setCached(cacheKey, validPosts);
-    return validPosts;
+    // Filter valid albums
+    const validAlbums = resolvedPosts.filter(p => p && p._albumVideos && p._albumVideos.length > 0);
+    setCached(cacheKey, validAlbums);
+    return validAlbums;
   } catch (err) {
     console.error(`Error scraping Hotpic (Page ${page}):`, err.message);
     return [];

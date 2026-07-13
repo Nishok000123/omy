@@ -168,13 +168,16 @@ export async function getScheduledUsers() {
 export async function addScheduledUser(userId, chatId, options = {}) {
   const users = await getScheduledUsers();
   if (users.find(u => u.userId === String(userId))) return false;
+  const allSites = ['desiporn', 'mmsbee', 'desipapa', 'hotpic', 'viralmms', 'desisexvdo', 'desibabe', 'desihub', 'desibf', 'desileak49', 'mastiraja'];
   users.push({
     userId: String(userId),
     chatId: String(chatId),
     time: options.time || '09:00',
     timezone: options.timezone || 'Asia/Kolkata',
     enabled: true,
-    sites: options.sites || ['all'], // 'all' or array of site keys
+    sites: options.sites || allSites,
+    groupTopics: options.groupTopics || false,
+    forceChannel: options.forceChannel || null,
     addedAt: new Date().toISOString()
   });
   await writeJsonBlobAndLocal('/scheduled_users.json', SCHEDULED_USERS_FILE, users);
@@ -211,4 +214,123 @@ export async function updateScheduledUserSites(userId, sites) {
 export async function getScheduledUser(userId) {
   const users = await getScheduledUsers();
   return users.find(u => u.userId === String(userId));
+}
+
+export async function updateScheduledUserGroupTopics(userId, enabled) {
+  let users = await getScheduledUsers();
+  const user = users.find(u => u.userId === String(userId));
+  if (!user) return false;
+  user.groupTopics = enabled;
+  await writeJsonBlobAndLocal('/scheduled_users.json', SCHEDULED_USERS_FILE, users);
+  return true;
+}
+
+export async function updateScheduledUserForceChannel(userId, forceChannel) {
+  let users = await getScheduledUsers();
+  const user = users.find(u => u.userId === String(userId));
+  if (!user) return false;
+  user.forceChannel = forceChannel;
+  await writeJsonBlobAndLocal('/scheduled_users.json', SCHEDULED_USERS_FILE, users);
+  return true;
+}
+
+// ─── Admin & Force Channel ──────────────────────────────────────────────────
+const ADMIN_FILE = path.join(LOCAL_DATA_DIR, 'admins.json');
+const FORCE_CHANNEL_FILE = path.join(LOCAL_DATA_DIR, 'force_channel.json');
+
+async function readAdminBlobOrLocal() {
+  const blobData = await blobGet('/admins.json');
+  if (blobData !== null) return blobData;
+  try {
+    if (fs.existsSync(ADMIN_FILE)) {
+      return JSON.parse(fs.readFileSync(ADMIN_FILE, 'utf8'));
+    }
+  } catch (_) {}
+  return { admins: [], firstUser: null };
+}
+
+async function writeAdminBlobAndLocal(data) {
+  let ok = false;
+  if (IS_VERCEL && BLOB_TOKEN) {
+    ok = await blobPut('/admins.json', data);
+  }
+  try {
+    fs.writeFileSync(ADMIN_FILE, JSON.stringify(data, null, 2));
+    ok = true;
+  } catch (_) {}
+  return ok;
+}
+
+async function readForceChannelBlobOrLocal() {
+  const blobData = await blobGet('/force_channel.json');
+  if (blobData !== null) return blobData;
+  try {
+    if (fs.existsSync(FORCE_CHANNEL_FILE)) {
+      return JSON.parse(fs.readFileSync(FORCE_CHANNEL_FILE, 'utf8'));
+    }
+  } catch (_) {}
+  return { channelId: null, channelUsername: null };
+}
+
+async function writeForceChannelBlobAndLocal(data) {
+  let ok = false;
+  if (IS_VERCEL && BLOB_TOKEN) {
+    ok = await blobPut('/force_channel.json', data);
+  }
+  try {
+    fs.writeFileSync(FORCE_CHANNEL_FILE, JSON.stringify(data, null, 2));
+    ok = true;
+  } catch (_) {}
+  return ok;
+}
+
+export async function isAdmin(userId) {
+  const data = await readAdminBlobOrLocal();
+  return data.admins.includes(String(userId)) || data.firstUser === String(userId);
+}
+
+export async function getAdmins() {
+  const data = await readAdminBlobOrLocal();
+  return data.admins;
+}
+
+export async function addAdmin(userId) {
+  const data = await readAdminBlobOrLocal();
+  const uid = String(userId);
+  if (!data.firstUser) data.firstUser = uid;
+  if (!data.admins.includes(uid)) data.admins.push(uid);
+  await writeAdminBlobAndLocal(data);
+  return true;
+}
+
+export async function removeAdmin(userId) {
+  const data = await readAdminBlobOrLocal();
+  data.admins = data.admins.filter(u => u !== String(userId));
+  await writeAdminBlobAndLocal(data);
+  return true;
+}
+
+export async function getForceChannel() {
+  return await readForceChannelBlobOrLocal();
+}
+
+export async function setForceChannel(channelId, channelUsername) {
+  await writeForceChannelBlobAndLocal({ channelId, channelUsername });
+  return true;
+}
+
+export async function removeForceChannel() {
+  await writeForceChannelBlobAndLocal({ channelId: null, channelUsername: null });
+  return true;
+}
+
+export async function checkForceSubscribe(bot, userId) {
+  const fc = await getForceChannel();
+  if (!fc.channelId) return true;
+  try {
+    const member = await bot.telegram.getChatMember(fc.channelId, userId);
+    return ['member', 'administrator', 'creator'].includes(member.status);
+  } catch (_) {
+    return false;
+  }
 }
