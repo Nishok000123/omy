@@ -110,14 +110,11 @@ async function testGroupSend() {
         
         if (chat.is_forum) {
           console.log(`  ✅ Forum group detected`);
-          // Note: Telegram Bot API doesn't have getForumTopics method in standard library
-          // We'll need to use message_thread_id when sending
-          // For now, simulate with common topic names
+          // Use actual Tamil topic thread ID from user
           topics = [
-            { name: 'Tamil', message_thread_id: null },  // Will be determined when sending
-            { name: 'General', message_thread_id: null }
+            { name: 'Tamil', message_thread_id: 35 }  // Real thread ID from t.me link
           ];
-          console.log(`  📋 Simulating topics: ${topics.map(t => t.name).join(', ')}`);
+          console.log(`  📋 Topics configured: Tamil (thread 35)`);
         } else {
           console.log(`  ⚠️  Not a forum group - will send to main chat`);
         }
