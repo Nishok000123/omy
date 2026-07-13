@@ -19,7 +19,7 @@ import {
   getRequestHeaders,
   ensureClearance
 } from './scraper.js';
-import { getFavorites, saveFavorite, removeFavorite, clearFavorites, addScheduledUser, removeScheduledUser, toggleScheduledUser, getScheduledUser, updateScheduledUserSites, isAdmin, addAdmin, removeAdmin, getForceChannel, setForceChannel, removeForceChannel, checkForceSubscribe } from './kv-storage.js';
+import { getFavorites, saveFavorite, removeFavorite, clearFavorites, addScheduledUser, removeScheduledUser, toggleScheduledUser, getScheduledUser, updateScheduledUserSites, updateScheduledUserGroupTopics, updateScheduledUserForceChannel, isAdmin, addAdmin, removeAdmin, getForceChannel, setForceChannel, removeForceChannel, checkForceSubscribe } from './kv-storage.js';
 
 // ---------------------------------------------------------------------------
 // downloadVideo – streams a remote video to a temp file using the same
@@ -589,9 +589,36 @@ bot.action('toggle_group_topics', async (ctx) => {
   const user = await getScheduledUser(userId);
   const newValue = !(user?.groupTopics || false);
   
-  // This would need a new function in kv-storage
-  // For now just show status
-  await ctx.answerCbQuery(`Group topics: ${newValue ? 'Enabled' : 'Disabled'} (need kv-storage update)`).catch(() => {});
+  await updateScheduledUserGroupTopics(userId, newValue);
+  
+  // Refresh menu
+  const updatedUser = await getScheduledUser(userId);
+  const isEnabled = updatedUser?.enabled || false;
+  const siteCount = updatedUser?.sites?.length || 11;
+  const groupTopics = updatedUser?.groupTopics || false;
+  const forceChannel = updatedUser?.forceChannel || null;
+
+  const text = `⚙️ *Auto-Send / Daily Digest Settings*\n\n` +
+    `📬 Daily Digest: ${isEnabled ? '✅ Enabled' : '❌ Disabled'}\n` +
+    `🌐 Sites Selected: ${siteCount === 11 ? 'All (11)' : siteCount}/11\n` +
+    `📍 Group Topics: ${groupTopics ? '✅ Enabled' : '❌ Disabled'}\n` +
+    `🔒 Force Channel: ${forceChannel ? `@${forceChannel}` : 'None'}\n\n` +
+    `Configure your preferences below:`;
+
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback(isEnabled ? '🔴 Disable Daily' : '🟢 Enable Daily', 'toggle_daily')],
+    [Markup.button.callback('🌐 Select Sites', 'setting_sites')],
+    [Markup.button.callback(groupTopics ? '📍 Disable Group Topics' : '📍 Enable Group Topics', 'toggle_group_topics')],
+    [Markup.button.callback('🔒 Set Force Channel', 'set_force_channel')],
+    [Markup.button.callback('🔙 Back to Main Menu', 'back_to_main')]
+  ]);
+
+  await ctx.editMessageText(text, {
+    parse_mode: 'Markdown',
+    ...keyboard
+  }).catch(() => {});
+  
+  await ctx.answerCbQuery(`Group topics ${newValue ? 'enabled' : 'disabled'}`).catch(() => {});
 });
 
 bot.action('set_force_channel', async (ctx) => {
@@ -1279,7 +1306,6 @@ bot.command('forcechannel', async (ctx) => {
   const channelUsername = text.startsWith('@') ? text.slice(1) : text;
   // Try to get channel ID
   try {
-    const chat = await ctx.replyWithMarkdown
     const chatInfo = await bot.telegram.getChat(`@${channelUsername}`);
     await setForceChannel(chatInfo.id, channelUsername);
     await ctx.reply(`✅ Force channel set to @${channelUsername} (ID: ${chatInfo.id})`).catch(() => {});

@@ -6,7 +6,7 @@
   "framework": null,
   "functions": {
     "api/**/*.js": {
-      "maxDuration": 30,
+      "maxDuration": 60,
       "runtime": "nodejs18.x"
     }
   },
@@ -22,6 +22,10 @@
     {
       "src": "/api/autosend",
       "dest": "/api/autosend.js"
+    },
+    {
+      "src": "/api/groupsend",
+      "dest": "/api/groupsend.js"
     }
   ],
   "crons": [
@@ -32,6 +36,10 @@
     {
       "path": "/api/autosend",
       "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/groupsend",
+      "schedule": "0 */6 * * *"
     }
   ]
 }
