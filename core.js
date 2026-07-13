@@ -19,7 +19,37 @@ import {
   getRequestHeaders,
   ensureClearance
 } from './scraper.js';
-import { getFavorites, saveFavorite, removeFavorite, clearFavorites, addScheduledUser, removeScheduledUser, toggleScheduledUser, getScheduledUser, updateScheduledUserSites, updateScheduledUserGroupTopics, updateScheduledUserForceChannel, isAdmin, addAdmin, removeAdmin, getForceChannel, setForceChannel, removeForceChannel, checkForceSubscribe } from './kv-storage.js';
+import { getFavorites, saveFavorite, removeFavorite, clearFavorites, addScheduledUser, removeScheduledUser, toggleScheduledUser, getScheduledUser, updateScheduledUserSites, updateScheduledUserGroupTopics, updateScheduledUserForceChannel, isAdmin, addAdmin, removeAdmin, getForceChannel, setForceChannel, removeForceChannel, checkForceSubscribe, getAdmins } from './kv-storage.js';
+
+// Admin system + force channel globals (must be declared before initializeBotState)
+const adminUsers = new Set();
+let forceChannel = null;
+
+// ---------------------------------------------------------------------------
+// Initialize bot state from storage (admins, force channel)
+// ---------------------------------------------------------------------------
+async function initializeBotState() {
+  // Load admins from storage
+  const storedAdmins = await getAdmins();
+  storedAdmins.forEach(uid => adminUsers.add(String(uid)));
+  
+  // Add hardcoded admin
+  const HARDCODED_ADMIN = '5688847060';
+  if (!adminUsers.has(HARDCODED_ADMIN)) {
+    adminUsers.add(HARDCODED_ADMIN);
+    await addAdmin(HARDCODED_ADMIN);
+    console.log(`✅ Added hardcoded admin: ${HARDCODED_ADMIN}`);
+  }
+  
+  // Load force channel from storage
+  const fc = await getForceChannel();
+  if (fc && fc.channelUsername) {
+    forceChannel = fc.channelUsername;
+    console.log(`✅ Loaded force channel: @${forceChannel}`);
+  }
+  
+  console.log(`✅ Initialized: ${adminUsers.size} admin(s), force channel: ${forceChannel || 'none'}`);
+}
 
 // ---------------------------------------------------------------------------
 // downloadVideo – streams a remote video to a temp file using the same
@@ -109,6 +139,9 @@ async function initBot() {
 
 await initBot();
 
+// Initialize bot state from storage
+await initializeBotState();
+
 // Global error handler to prevent bot from crashing
 bot.catch((err, ctx) => {
   console.error(`Telegraf caught an error for update ${ctx.update?.update_id}:`, err);
@@ -134,12 +167,6 @@ const HELP_TEXT = `📖 *Usage Instructions*:\n\n` +
 
 // In-memory store for chat settings (default to 15 minutes auto-delete)
 const chatSettings = {};
-
-// Admin system: first user = admin
-const adminUsers = new Set();
-
-// Force channel (username without @)
-let forceChannel = null;
 
 // Map to store custom query IDs to avoid exceeding Telegram's 64-byte callback query data limit
 const customQueries = {};
@@ -183,7 +210,7 @@ async function forceSubscribeMiddleware(ctx, next) {
   if (ctx.message?.text?.startsWith('/start')) return next();
   
   try {
-    const isMember = await checkForceSubscribe(userId);
+    const isMember = await checkForceSubscribe(bot, userId);
     if (!isMember) {
       await ctx.replyWithMarkdown(
         `🔒 *Force Subscribe Required*\n\n` +
@@ -1123,7 +1150,7 @@ bot.action(new RegExp('^csearch_(' + validSitesPattern + ')_(.+)_(\\d+)$'), asyn
 
   const queryText = customQueries[queryId];
   if (!queryText) {
-    await ctx.answerCbQuery('Search query expired. Please type a new search word.').catch(() => {});
+    await ctx.answerCbQuery('⚠️ Search query expired. Please type a new search word.', { show_alert: true }).catch(() => {});
     return;
   }
 
@@ -1172,7 +1199,7 @@ bot.action(/^dl_(v\d+)$/, async (ctx) => {
   const videoUrl = videoDownloadUrls.get(shortId);
 
   if (!videoUrl) {
-    return ctx.answerCbQuery('Download link expired. Please search again.').catch(() => {});
+    return ctx.answerCbQuery('⚠️ Download link expired. Please search again.', { show_alert: true }).catch(() => {});
   }
 
   await ctx.answerCbQuery('⬇️ Downloading... this may take a minute.').catch(() => {});
@@ -1211,7 +1238,7 @@ bot.action(/^vn_(v\d+)$/, async (ctx) => {
   const videoUrl = videoDownloadUrls.get(shortId);
 
   if (!videoUrl) {
-    return ctx.answerCbQuery('Preview link expired. Please search again.').catch(() => {});
+    return ctx.answerCbQuery('⚠️ Preview link expired. Please search again.', { show_alert: true }).catch(() => {});
   }
 
   await ctx.answerCbQuery('🎬 Loading preview...').catch(() => {});
@@ -1251,17 +1278,22 @@ bot.action('noop', (ctx) => ctx.answerCbQuery().catch(() => {}));
 
 // ─── Force subscribe check handler ─────────────────────────────────────────────
 bot.action('check_force_subscribe', async (ctx) => {
+  await ctx.answerCbQuery('🔄 Checking...').catch(() => {});
+  
   const userId = ctx.from.id;
-  const isMember = await checkForceSubscribe(bot, userId);
-  if (isMember) {
-    await ctx.answerCbQuery('✅ Verified! You can now use the bot.').catch(() => {});
-    await ctx.deleteMessage().catch(() => {});
-    // Re-trigger start
-    const welcomeText = `👋 *Welcome to the Desi Video Scraper Bot!*\n\n` +
-      `Select a site from the menu below, click on one of the quick tags, or **type a custom search word** directly to search the sites and get results!`;
-    await ctx.replyWithMarkdown(welcomeText, getMainMenu(ctx.chat.id)).catch(() => {});
-  } else {
-    await ctx.answerCbQuery('❌ You have not joined yet. Please join the channel first.').catch(() => {});
+  try {
+    const isMember = await checkForceSubscribe(bot, userId);
+    if (isMember) {
+      await ctx.deleteMessage().catch(() => {});
+      // Re-trigger start
+      const welcomeText = `👋 *Welcome to the Desi Video Scraper Bot!*\n\n` +
+        `Select a site from the menu below, click on one of the quick tags, or **type a custom search word** directly to search the sites and get results!`;
+      await ctx.replyWithMarkdown(welcomeText, getMainMenu(ctx.chat.id)).catch(() => {});
+    } else {
+      await ctx.answerCbQuery('❌ You have not joined yet. Please join the channel first.', { show_alert: true }).catch(() => {});
+    }
+  } catch (e) {
+    await ctx.answerCbQuery('❌ Could not verify membership. Try again.', { show_alert: true }).catch(() => {});
   }
 });
 
@@ -1300,6 +1332,7 @@ bot.command('forcechannel', async (ctx) => {
   const text = ctx.message.text.split(' ')[1];
   if (!text) {
     await removeForceChannel();
+    forceChannel = null; // Update global variable
     return ctx.reply('✅ Force channel removed').catch(() => {});
   }
   
@@ -1308,6 +1341,7 @@ bot.command('forcechannel', async (ctx) => {
   try {
     const chatInfo = await bot.telegram.getChat(`@${channelUsername}`);
     await setForceChannel(chatInfo.id, channelUsername);
+    forceChannel = channelUsername; // Update global variable
     await ctx.reply(`✅ Force channel set to @${channelUsername} (ID: ${chatInfo.id})`).catch(() => {});
   } catch (e) {
     await ctx.reply(`❌ Could not find channel @${channelUsername}: ${e.message}`).catch(() => {});
