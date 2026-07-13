@@ -1372,6 +1372,75 @@ bot.command('broadcast', async (ctx) => {
   await ctx.reply(`📢 Broadcast complete: ${sent} sent, ${failed} failed`).catch(() => {});
 });
 
+// ─── /groupinfo command — get group chat ID and forum topics ────────────────────
+bot.command('groupinfo', async (ctx) => {
+  // Check if used in a group
+  if (ctx.chat.type === 'private') {
+    return ctx.reply('❌ This command only works in groups/supergroups.').catch(() => {});
+  }
+
+  const chatId = ctx.chat.id;
+  const chatTitle = ctx.chat.title || 'Unknown';
+  const chatType = ctx.chat.type;
+  const userId = ctx.from.id;
+
+  let response = `📊 *Group Information*\n\n` +
+    `📛 *Name*: ${chatTitle}\n` +
+    `🆔 *Chat ID*: \`${chatId}\`\n` +
+    `📦 *Type*: ${chatType}\n`;
+
+  // Check if bot is admin
+  try {
+    const botMember = await bot.telegram.getChatMember(chatId, bot.botInfo.id);
+    const isAdmin = ['administrator', 'creator'].includes(botMember.status);
+    response += `🔐 *Bot Admin*: ${isAdmin ? '✅ Yes' : '❌ No'}\n`;
+    
+    if (!isAdmin) {
+      response += `\n⚠️ *Bot needs admin rights to send to forum topics*\n`;
+    }
+  } catch (e) {
+    response += `🔐 *Bot Admin*: ❓ Unknown\n`;
+  }
+
+  // Try to get forum topics if supergroup
+  if (chatType === 'supergroup') {
+    try {
+      // Telegram's getForumTopicIconStickers is for getting sticker sets
+      // We need a different approach - try to get chat info
+      const chat = await bot.telegram.getChat(chatId);
+      
+      if (chat.is_forum) {
+        response += `\n📍 *Forum Topics*: ✅ Enabled\n`;
+        response += `\nℹ️ Bot will auto-fetch topics when sending.\n`;
+        response += `Topics are matched by name:\n`;
+        response += `• "Tamil" topic → Tamil content\n`;
+        response += `• "Mallu" topic → Mallu content\n`;
+        response += `• Case-insensitive matching\n`;
+      } else {
+        response += `\n📍 *Forum Topics*: ❌ Not a forum group\n`;
+      }
+    } catch (e) {
+      response += `\n⚠️ Could not check forum status: ${e.message}\n`;
+    }
+  }
+
+  response += `\n\n**Next Steps:**\n`;
+  response += `1. Copy the Chat ID above\n`;
+  response += `2. Add to your config in \`scheduled_users.json\`:\n`;
+  response += `\`\`\`json\n`;
+  response += `"groups": [\n`;
+  response += `  {\n`;
+  response += `    "chatId": "${chatId}",\n`;
+  response += `    "topics": []\n`;
+  response += `  }\n`;
+  response += `]\n`;
+  response += `\`\`\`\n`;
+  response += `3. Enable "Group Topics" in /settings\n`;
+  response += `4. Bot will auto-send to matching topics every 6 hours`;
+
+  await ctx.replyWithMarkdown(response).catch(() => {});
+});
+
 // ─── Save / Unsave handlers ───────────────────────────────────────────────────
 bot.action(/^save_(v\d+)$/, async (ctx) => {
   const saveId = ctx.match[1];
