@@ -1211,31 +1211,30 @@ async function scrapeHotpic(page = 1, limit = 10) {
       if (uniquePosts.length >= limit) break;
     }
 
-    // Resolve each album page for direct MP4 video URLs
+    // Resolve each album page for ALL MP4 video URLs
     const resolvedPosts = await Promise.all(
       uniquePosts.map(async (post) => {
         try {
           const postRes = await axiosGetWithRetry(post.url, { headers: getRequestHeaders(baseUrl) });
           const post$ = cheerio.load(postRes.data);
 
-          // Try JSON-LD first (VideoObject in structured data)
-          let videoUrl = '';
+          // Find all MP4 URLs in page HTML
+          const mp4Matches = postRes.data.matchAll(/https:\/\/hotpic\.cc\/uploads\/[^"'\s]+\.mp4/g);
+          const videoUrls = [...new Set([...mp4Matches].map(m => m[0]))];
+
+          // Also check JSON-LD for VideoObjects
           post$('script[type="application/ld+json"]').each((_, el) => {
             try {
               const data = JSON.parse(post$(el).html());
               const items = Array.isArray(data) ? data : [data];
               for (const item of items) {
-                // Check for VideoObject directly or in image array
                 if (item['@type'] === 'VideoObject' && item.contentUrl && item.contentUrl.includes('.mp4')) {
-                  videoUrl = item.contentUrl;
-                  return false;
+                  videoUrls.push(item.contentUrl);
                 }
-                // Also check if nested in @graph
                 if (item['@graph']) {
                   for (const g of item['@graph']) {
                     if (g['@type'] === 'VideoObject' && g.contentUrl && g.contentUrl.includes('.mp4')) {
-                      videoUrl = g.contentUrl;
-                      return false;
+                      videoUrls.push(g.contentUrl);
                     }
                   }
                 }
@@ -1243,27 +1242,29 @@ async function scrapeHotpic(page = 1, limit = 10) {
             } catch (_) {}
           });
 
-          // Fallback: direct MP4 links in page HTML (first one wins)
-          if (!videoUrl) {
-            const mp4Match = postRes.data.match(/https:\/\/hotpic\.cc\/uploads\/[^"'\s]+\.mp4/);
-            if (mp4Match) videoUrl = mp4Match[0];
+          const uniqueVideoUrls = [...new Set(videoUrls)];
+
+          if (uniqueVideoUrls.length === 0) {
+            return null;
           }
 
-          post.videoUrl = normalizeUrl(videoUrl, baseUrl);
-
-          if (!post.thumbnail) {
-            // og:image or first thumb in JSON-LD
-            post.thumbnail = post$('meta[property="og:image"]').attr('content')
-              || post$('script[type="application/ld+json"]').first().text().match(/"thumbnailUrl"\s*:\s*"([^"]+)"/)?.[1];
-          }
-          return post;
+          // Return multiple posts - one per video
+          return uniqueVideoUrls.map((videoUrl, idx) => ({
+            ...post,
+            title: `${post.title} (${idx + 1}/${uniqueVideoUrls.length})`,
+            videoUrl: normalizeUrl(videoUrl, baseUrl),
+            thumbnail: post.thumbnail || post$('meta[property="og:image"]').attr('content')
+              || post$('script[type="application/ld+json"]').first().text().match(/"thumbnailUrl"\s*:\s*"([^"]+)"/)?.[1],
+            _albumUrl: post.url
+          }));
         } catch (_) {
-          return post;
+          return null;
         }
       })
     );
 
-    const validPosts = resolvedPosts.filter(p => p.videoUrl);
+    // Flatten array of arrays and filter
+    const validPosts = resolvedPosts.flat().filter(p => p && p.videoUrl);
     setCached(cacheKey, validPosts);
     return validPosts;
   } catch (err) {

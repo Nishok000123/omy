@@ -174,6 +174,7 @@ export async function addScheduledUser(userId, chatId, options = {}) {
     time: options.time || '09:00',
     timezone: options.timezone || 'Asia/Kolkata',
     enabled: true,
+    sites: options.sites || ['all'], // 'all' or array of site keys
     addedAt: new Date().toISOString()
   });
   await writeJsonBlobAndLocal('/scheduled_users.json', SCHEDULED_USERS_FILE, users);
@@ -196,4 +197,18 @@ export async function toggleScheduledUser(userId) {
   user.enabled = !user.enabled;
   await writeJsonBlobAndLocal('/scheduled_users.json', SCHEDULED_USERS_FILE, users);
   return user.enabled;
+}
+
+export async function updateScheduledUserSites(userId, sites) {
+  let users = await getScheduledUsers();
+  const user = users.find(u => u.userId === String(userId));
+  if (!user) return false;
+  user.sites = sites;
+  await writeJsonBlobAndLocal('/scheduled_users.json', SCHEDULED_USERS_FILE, users);
+  return true;
+}
+
+export async function getScheduledUser(userId) {
+  const users = await getScheduledUsers();
+  return users.find(u => u.userId === String(userId));
 }

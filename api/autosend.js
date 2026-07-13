@@ -4,6 +4,7 @@
  * Schedule: runs at 03:30 UTC (09:00 IST) daily via vercel.json cron.
  * 
  * Each user gets a customized Top 10 sent to their private chat.
+ * Users can configure which sites to include via /settings command.
  */
 import { runDigest } from '../digest.js';
 import { getScheduledUsers } from '../kv-storage.js';
@@ -36,15 +37,19 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, message: 'No subscribed users' });
     }
 
-    // Fetch the digest posts once
+    // Fetch the digest posts once - include all 11 sites
     const {
-      scrapeDesiPorn, scrapeViralMms, scrapeDesiSexVdo, scrapeDesiBabe,
+      scrapeDesiPorn, scrapeMMSBee, scrapeDesiPapa, scrapeHotpic,
+      scrapeViralMms, scrapeDesiSexVdo, scrapeDesiBabe,
       scrapeDesiHub, scrapeDesiBF, scrapeDesiLeak49, scrapeMastiRaja
     } = await import('../scraper.js');
 
     const limitPerSite = 2;
     const results = await Promise.allSettled([
       scrapeDesiPorn(1, '', limitPerSite),
+      scrapeMMSBee(1, '', limitPerSite),
+      scrapeDesiPapa(1, '', limitPerSite),
+      scrapeHotpic(1, limitPerSite),
       scrapeViralMms(1, limitPerSite),
       scrapeDesiSexVdo(1, '', limitPerSite),
       scrapeDesiBabe(1, limitPerSite),
@@ -75,14 +80,18 @@ export default async function handler(req, res) {
 
     for (const user of enabledUsers) {
       try {
-        const header = `🌅 *Good Morning! Daily Top 10 – ${today}*\n\n` +
+        // Filter posts based on user's site preferences
+        const userSites = user.sites || ['desiporn', 'mmsbee', 'desipapa', 'hotpic', 'viralmms', 'desisexvdo', 'desibabe', 'desihub', 'desibf', 'desileak49', 'mastiraja'];
+        const userPosts = posts.filter(p => userSites.includes(p.siteName?.toLowerCase().replace(/\s+/g, '') || ''));
+        
+        const header = `🌅 *Good Morning! Daily Top ${userPosts.length} – ${today}*\n\n` +
           `Your personalized daily digest from across the web! ☕\n\n` +
-          `_Compiled from 8 sites just for you._`;
+          `_Compiled from ${userSites.length} sites just for you._`;
 
         await bot.telegram.sendMessage(user.chatId, header, { parse_mode: 'Markdown' });
 
-        for (let i = 0; i < posts.length; i++) {
-          const post = posts[i];
+        for (let i = 0; i < userPosts.length; i++) {
+          const post = userPosts[i];
           const caption = `*${i + 1}. ${escapeMarkdown(post.title)}*\n` +
             `🌐 _${post.siteName || 'Unknown'}_\n\n` +
             `${post.videoUrl ? `[▶️ Watch Video](${post.videoUrl})` : `[🔗 View Post](${post.url})`}`;

@@ -1056,4 +1056,122 @@ bot.command('daily', async (ctx) => {
   }
 });
 
+// ─── /settings command — configure daily digest sites ────────────────────────────
+bot.command('settings', async (ctx) => {
+  const userId = ctx.from.id;
+  const user = await getScheduledUser(userId);
+  
+  if (!user) {
+    await ctx.replyWithMarkdown(
+      `⚙️ *Daily Digest Settings*\n\n` +
+      `You're not subscribed to daily digest yet.\n` +
+      `Use /daily to enable it first, then customize sites.`,
+      getMainMenu(ctx.chat.id)
+    ).catch(() => {});
+    return;
+  }
+
+  const allSites = [
+    { key: 'desiporn', label: 'DesiPorn 🔥' },
+    { key: 'mmsbee', label: 'MMSBee 🐝' },
+    { key: 'desipapa', label: 'DesiPapa 🎬' },
+    { key: 'hotpic', label: 'Hotpic 🔥' },
+    { key: 'viralmms', label: 'ViralMMS 🎬' },
+    { key: 'desisexvdo', label: 'DesiSexVdo 🎥' },
+    { key: 'desibabe', label: 'DesiBabe 🍑' },
+    { key: 'desihub', label: 'DesiHub 🇮🇳' },
+    { key: 'desibf', label: 'DesiBF 💋' },
+    { key: 'desileak49', label: 'DesiLeak49 💦' },
+    { key: 'mastiraja', label: 'MastiRaja 🍿' }
+  ];
+
+  const userSites = user.sites || [];
+  const isAll = userSites.includes('all') || userSites.length === allSites.length;
+
+  const keyboard = Markup.inlineKeyboard([
+    ...allSites.map(site => [
+      Markup.button.callback(
+        `${userSites.includes(site.key) ? '✅' : '⬜'} ${site.label}`,
+        `setting_site_${site.key}`
+      )
+    ]),
+    [Markup.button.callback(isAll ? '✅ All Sites' : '⬜ All Sites', 'setting_site_all')],
+    [Markup.button.callback('💾 Save & Close', 'setting_save'), Markup.button.callback('🔙 Back', 'back_to_main')]
+  ]);
+
+  await ctx.replyWithMarkdown(
+    `⚙️ *Daily Digest Site Selection*\n\n` +
+    `Choose which sites to include in your daily Top 10:\n\n` +
+    `_${isAll ? 'All 11 sites selected' : `${userSites.filter(s => s !== 'all').length} of ${allSites.length} sites selected`}_`,
+    keyboard
+  ).catch(() => {});
+});
+
+// Handle site selection callbacks
+bot.action(/^setting_site_(.+)$/, async (ctx) => {
+  const userId = ctx.from.id;
+  const siteKey = ctx.match[1];
+  
+  const user = await getScheduledUser(userId);
+  if (!user) {
+    await ctx.answerCbQuery('Not subscribed. Use /daily first.').catch(() => {});
+    return;
+  }
+
+  const allSites = ['desiporn', 'mmsbee', 'desipapa', 'hotpic', 'viralmms', 'desisexvdo', 'desibabe', 'desihub', 'desibf', 'desileak49', 'mastiraja'];
+  let userSites = user.sites || [];
+
+  if (siteKey === 'all') {
+    userSites = userSites.length === allSites.length ? [] : allSites;
+  } else {
+    if (userSites.includes(siteKey)) {
+      userSites = userSites.filter(s => s !== siteKey);
+    } else {
+      userSites.push(siteKey);
+    }
+  }
+
+  await updateScheduledUserSites(userId, userSites);
+
+  // Update keyboard
+  const userSiteLabels = [
+    { key: 'desiporn', label: 'DesiPorn 🔥' },
+    { key: 'mmsbee', label: 'MMSBee 🐝' },
+    { key: 'desipapa', label: 'DesiPapa 🎬' },
+    { key: 'hotpic', label: 'Hotpic 🔥' },
+    { key: 'viralmms', label: 'ViralMMS 🎬' },
+    { key: 'desisexvdo', label: 'DesiSexVdo 🎥' },
+    { key: 'desibabe', label: 'DesiBabe 🍑' },
+    { key: 'desihub', label: 'DesiHub 🇮🇳' },
+    { key: 'desibf', label: 'DesiBF 💋' },
+    { key: 'desileak49', label: 'DesiLeak49 💦' },
+    { key: 'mastiraja', label: 'MastiRaja 🍿' }
+  ];
+
+  const isAll = userSites.length === allSites.length;
+  const keyboard = Markup.inlineKeyboard([
+    ...userSiteLabels.map(site => [
+      Markup.button.callback(
+        `${userSites.includes(site.key) ? '✅' : '⬜'} ${site.label}`,
+        `setting_site_${site.key}`
+      )
+    ]),
+    [Markup.button.callback(isAll ? '✅ All Sites' : '⬜ All Sites', 'setting_site_all')],
+    [Markup.button.callback('💾 Save & Close', 'setting_save'), Markup.button.callback('🔙 Back', 'back_to_main')]
+  ]);
+
+  await ctx.editMessageReplyMarkup(keyboard.reply_markup).catch(() => {});
+  await ctx.answerCbQuery(`Toggled ${siteKey}`).catch(() => {});
+});
+
+bot.action('setting_save', async (ctx) => {
+  await ctx.answerCbQuery('Saved!').catch(() => {});
+  await ctx.deleteMessage().catch(() => {});
+  await ctx.replyWithMarkdown(
+    `✅ *Settings saved!*\n\n` +
+    `Your daily digest will now include only selected sites.`,
+    getMainMenu(ctx.chat.id)
+  ).catch(() => {});
+});
+
 export { bot, customQueries, getShortVideoId, videoDownloadUrls };
