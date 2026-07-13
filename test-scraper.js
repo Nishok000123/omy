@@ -1,7 +1,6 @@
 import assert from 'assert';
 import {
   normalizeUrl,
-  scrapeKamaClips,
   scrapeViralMms,
   scrapeDesiSexVdo,
   scrapeDesiBabe,
@@ -9,6 +8,9 @@ import {
   scrapeDesiBF,
   scrapeDesiLeak49,
   scrapeMastiRaja,
+  scrapeMMSBee,
+  scrapeDesiPapa,
+  scrapeHotpic,
   getCached,
   setCached,
   cache,
@@ -121,7 +123,6 @@ async function runTests() {
 
   runNormalizeUrlTests();
 
-  await testScraper('KamaClips', scrapeKamaClips);
   await testScraper('ViralMMS', scrapeViralMms);
   await testScraper('DesiSexVdo', scrapeDesiSexVdo);
   await testScraper('DesiBabe', scrapeDesiBabe);
@@ -129,9 +130,14 @@ async function runTests() {
   await testScraper('DesiBF', scrapeDesiBF);
   await testScraper('DesiLeak49', scrapeDesiLeak49);
   await testScraper('MastiRaja', scrapeMastiRaja);
+  await testScraper('MMSBee', scrapeMMSBee);
+  await testScraper('DesiPapa', scrapeDesiPapa);
+  await testScraper('Hotpic', scrapeHotpic);
 
   console.log('\n--- Testing Search (Tamil) ---');
   await testScraper('MastiRaja Search', scrapeMastiRaja, 1, 'Tamil');
+  await testScraper('MMSBee Search', scrapeMMSBee, 1, 'Tamil');
+  await testScraper('Hotpic Search', scrapeHotpic, 1, 'Tamil');
 
   console.log('\n--- Scraper Tests Finished ---');
 }

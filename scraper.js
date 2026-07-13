@@ -1165,6 +1165,113 @@ async function scrapeDesiPapa(page = 1, searchTerm = '', limit = 10) {
   }
 }
 
+/**
+ * Scrapes Hotpic.cc popular albums (NSFW) - direct MP4 video URLs
+ * Listing: /filter/dpd/{page}  |  Albums: /album/{id}  |  Videos embedded in JSON-LD + direct MP4 links
+ */
+async function scrapeHotpic(page = 1, limit = 10) {
+  const cacheKey = `hotpic_${page}_l${limit}`;
+  const cached = getCached(cacheKey);
+  if (cached) return cached;
+
+  const baseUrl = 'https://hotpic.cc';
+  // Popular filter: day+popular+desc = /filter/dpd
+  const url = page === 1 ? `${baseUrl}/filter/dpd` : `${baseUrl}/filter/dpd/${page}`;
+
+  try {
+    await ensureClearance(baseUrl);
+    const res = await axiosGetWithRetry(url, { headers: getRequestHeaders(baseUrl) });
+    const $ = cheerio.load(res.data);
+    const posts = [];
+
+    // Album cards in #album-list
+    $('a[href^="/album/"]').each((_, el) => {
+      const a = $(el);
+      const href = a.attr('href');
+      const title = a.attr('title') || a.attr('data-title') || a.text().trim();
+      const imgSrc = a.find('img').attr('data-src') || a.find('img').attr('src');
+      if (title && href) {
+        posts.push({
+          title,
+          url: normalizeUrl(href, baseUrl),
+          thumbnail: normalizeUrl(imgSrc, baseUrl),
+          siteName: 'Hotpic',
+          siteBaseUrl: baseUrl
+        });
+      }
+    });
+
+    const uniquePosts = [];
+    const urls = new Set();
+    for (const post of posts) {
+      if (!urls.has(post.url)) {
+        urls.add(post.url);
+        uniquePosts.push(post);
+      }
+      if (uniquePosts.length >= limit) break;
+    }
+
+    // Resolve each album page for direct MP4 video URLs
+    const resolvedPosts = await Promise.all(
+      uniquePosts.map(async (post) => {
+        try {
+          const postRes = await axiosGetWithRetry(post.url, { headers: getRequestHeaders(baseUrl) });
+          const post$ = cheerio.load(postRes.data);
+
+          // Try JSON-LD first (VideoObject in structured data)
+          let videoUrl = '';
+          post$('script[type="application/ld+json"]').each((_, el) => {
+            try {
+              const data = JSON.parse(post$(el).html());
+              const items = Array.isArray(data) ? data : [data];
+              for (const item of items) {
+                // Check for VideoObject directly or in image array
+                if (item['@type'] === 'VideoObject' && item.contentUrl && item.contentUrl.includes('.mp4')) {
+                  videoUrl = item.contentUrl;
+                  return false;
+                }
+                // Also check if nested in @graph
+                if (item['@graph']) {
+                  for (const g of item['@graph']) {
+                    if (g['@type'] === 'VideoObject' && g.contentUrl && g.contentUrl.includes('.mp4')) {
+                      videoUrl = g.contentUrl;
+                      return false;
+                    }
+                  }
+                }
+              }
+            } catch (_) {}
+          });
+
+          // Fallback: direct MP4 links in page HTML (first one wins)
+          if (!videoUrl) {
+            const mp4Match = postRes.data.match(/https:\/\/hotpic\.cc\/uploads\/[^"'\s]+\.mp4/);
+            if (mp4Match) videoUrl = mp4Match[0];
+          }
+
+          post.videoUrl = normalizeUrl(videoUrl, baseUrl);
+
+          if (!post.thumbnail) {
+            // og:image or first thumb in JSON-LD
+            post.thumbnail = post$('meta[property="og:image"]').attr('content')
+              || post$('script[type="application/ld+json"]').first().text().match(/"thumbnailUrl"\s*:\s*"([^"]+)"/)?.[1];
+          }
+          return post;
+        } catch (_) {
+          return post;
+        }
+      })
+    );
+
+    const validPosts = resolvedPosts.filter(p => p.videoUrl);
+    setCached(cacheKey, validPosts);
+    return validPosts;
+  } catch (err) {
+    console.error(`Error scraping Hotpic (Page ${page}):`, err.message);
+    return [];
+  }
+}
+
 export {
   normalizeUrl,
   getRequestHeaders,
@@ -1172,6 +1279,7 @@ export {
   scrapeDesiPorn,
   scrapeMMSBee,
   scrapeDesiPapa,
+  scrapeHotpic,
   scrapeViralMms,
   scrapeDesiSexVdo,
   scrapeDesiBabe,
