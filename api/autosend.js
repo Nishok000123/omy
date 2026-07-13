@@ -1,10 +1,7 @@
 /**
  * api/autosend.js
- * Vercel cron endpoint - sends personalized daily digest to all subscribed users.
- * Schedule: runs at 03:30 UTC (09:00 IST) daily via vercel.json cron.
- * 
- * Each user gets a customized Top 10 sent to their private chat.
- * Users can configure which sites to include via /settings command.
+ * Vercel cron — personalized daily digest to opted-in users.
+ * Schedule: 03:30 UTC daily (vercel.json)
  */
 import { runDigest } from '../digest.js';
 import { getScheduledUsers } from '../kv-storage.js';

@@ -1,8 +1,7 @@
 /**
  * api/groupsend.js
- * Vercel cron — auto-send to forum topics by TAG NAME match.
- * Tamil topic → scrape/search "Tamil" content → send to that thread.
- * Schedule: every 6 hours
+ * Vercel cron — route digest items into forum topics by name match.
+ * Schedule: every 6 hours (see vercel.json)
  */
 import {
   scrapeDesiPorn, scrapeMMSBee, scrapeDesiPapa, scrapeHotpic,

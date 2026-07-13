@@ -13,10 +13,10 @@ http.createServer((req, res) => {
 // Start the bot using polling (for local dev / non-serverless hostings)
 bot.launch()
   .then(() => {
-    console.log('🤖 Telegram Scraper Bot is up and running in polling mode!');
+    console.log('Omy feed bot running (polling mode)');
   })
   .catch((err) => {
-    console.error('Failed to launch Telegram Bot:', err);
+    console.error('Failed to launch bot:', err);
   });
 
 // Enable graceful stop

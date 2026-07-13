@@ -157,16 +157,15 @@ const TAG_LABELS = {
   young: 'Young'
 };
 
-const HELP_TEXT = `📖 *Usage Instructions*:\n\n` +
-  `1. Click any site button to open the page selector.\n` +
-  `2. Select a quick tag directly from the front menu.\n` +
-  `3. **Type any word** (e.g. \`bhabhi\`) to search across all sites!\n` +
-  `4. **Type a #hashtag** (e.g. \`#tamil\`, \`#mallu\`) for tag search.\n` +
-  `5. Press 💾 *Save* under any video to bookmark it.\n` +
-  `6. Use /favorites to view your saved videos.\n` +
-  `7. Toggle *Auto-Delete Timer* (Off / 15 Min / 30 Min) to auto-wipe media.\n` +
-  `8. Use pagination controls at the bottom of results to browse pages.\n\n` +
-  `Use /start to open the main menu.`;
+const HELP_TEXT = `📖 *Usage*:\n\n` +
+  `1. Pick a *source* to open filters / pages.\n` +
+  `2. Use quick *tags* on the main menu.\n` +
+  `3. Type any word to search across sources.\n` +
+  `4. Type a #hashtag for tag search.\n` +
+  `5. 💾 *Save* bookmarks items; /favorites lists them.\n` +
+  `6. Toggle *Auto-Delete* for timed media cleanup.\n` +
+  `7. *Auto-Send* for digests + forum topic routing.\n\n` +
+  `Use /start for the main menu.`;
 
 // In-memory store for chat settings (default to 15 minutes auto-delete)
 const chatSettings = {};
@@ -456,8 +455,8 @@ function getPaginationKeyboard(siteKey, page, tag = '', queryId = '', videoUrl =
 }
 
 bot.start((ctx) => {
-  const welcomeText = `👋 *Welcome to the Desi Video Scraper Bot!*\n\n` +
-    `Select a site from the menu below, click on one of the quick tags, or **type a custom search word** directly to search the sites and get results!`;
+  const welcomeText = `👋 *Welcome to Omy Feed Bot!*\n\n` +
+    `Pick a source, use a quick tag, or **type a search word** to pull digests from your feeds.`;
   ctx.replyWithMarkdown(welcomeText, getMainMenu(ctx.chat.id)).catch(() => {});
 });
 
@@ -475,8 +474,8 @@ bot.action('help', async (ctx) => {
 
 bot.action('back_to_main', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
-  const welcomeText = `👋 *Welcome to the Desi Video Scraper Bot!*\n\n` +
-    `Select a site from the menu below, click on one of the quick tags, or **type a custom search word** directly to search the sites and get results!`;
+  const welcomeText = `👋 *Welcome to Omy Feed Bot!*\n\n` +
+    `Pick a source, use a quick tag, or **type a search word** to pull digests from your feeds.`;
   
   if (ctx.callbackQuery && ctx.callbackQuery.message) {
     const msg = ctx.callbackQuery.message;
@@ -510,8 +509,8 @@ bot.action('toggle_autodelete', async (ctx) => {
   }
   chatSettings[chatId] = settings;
 
-  const welcomeText = `👋 *Welcome to the Desi Video Scraper Bot!*\n\n` +
-    `Select a site from the menu below, click on one of the quick tags, or **type a custom search word** directly to search the sites and get results!`;
+  const welcomeText = `👋 *Welcome to Omy Feed Bot!*\n\n` +
+    `Pick a source, use a quick tag, or **type a search word** to pull digests from your feeds.`;
 
   await ctx.editMessageText(welcomeText, {
     parse_mode: 'Markdown',
