@@ -1342,8 +1342,8 @@ bot.action('check_force_subscribe', async (ctx) => {
     if (isMember) {
       await ctx.deleteMessage().catch(() => {});
       // Re-trigger start
-      const welcomeText = `👋 *Welcome to the Desi Video Scraper Bot!*\n\n` +
-        `Select a site from the menu below, click on one of the quick tags, or **type a custom search word** directly to search the sites and get results!`;
+      const welcomeText = `👋 *Welcome to Omy Feed Bot!*\n\n` +
+        `Pick a source, use a quick tag, or **type a search word** to pull digests from your feeds.`;
       await ctx.replyWithMarkdown(welcomeText, getMainMenu(ctx.chat.id)).catch(() => {});
     } else {
       await ctx.answerCbQuery('❌ You have not joined yet. Please join the channel first.', { show_alert: true }).catch(() => {});
