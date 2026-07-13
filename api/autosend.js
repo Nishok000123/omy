@@ -37,11 +37,12 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, message: 'No subscribed users' });
     }
 
-    // Fetch the digest posts once - include all 11 sites
+    // Fetch the digest posts once - all sites
     const {
       scrapeDesiPorn, scrapeMMSBee, scrapeDesiPapa, scrapeHotpic,
       scrapeViralMms, scrapeDesiSexVdo, scrapeDesiBabe,
-      scrapeDesiHub, scrapeDesiBF, scrapeDesiLeak49, scrapeMastiRaja
+      scrapeDesiHub, scrapeDesiBF, scrapeDesiLeak49, scrapeMastiRaja,
+      scrapeLatestDesiMms, scrapeIndianPorn365, scrapeMmsGram
     } = await import('../scraper.js');
 
     const limitPerSite = 2;
@@ -56,7 +57,10 @@ export default async function handler(req, res) {
       scrapeDesiHub(1, limitPerSite),
       scrapeDesiBF(1, '', limitPerSite),
       scrapeDesiLeak49(1, '', limitPerSite),
-      scrapeMastiRaja(1, '', limitPerSite)
+      scrapeMastiRaja(1, '', limitPerSite),
+      scrapeLatestDesiMms(1, 'most-viewed', limitPerSite),
+      scrapeIndianPorn365(1, 'latest', limitPerSite),
+      scrapeMmsGram(1, 'latest-trending', limitPerSite)
     ]);
 
     const posts = results
@@ -81,8 +85,12 @@ export default async function handler(req, res) {
     for (const user of enabledUsers) {
       try {
         // Filter posts based on user's site preferences
-        const userSites = user.sites || ['desiporn', 'mmsbee', 'desipapa', 'hotpic', 'viralmms', 'desisexvdo', 'desibabe', 'desihub', 'desibf', 'desileak49', 'mastiraja'];
-        const userPosts = posts.filter(p => userSites.includes(p.siteName?.toLowerCase().replace(/\s+/g, '') || ''));
+        const userSites = user.sites || ['desiporn', 'mmsbee', 'desipapa', 'hotpic', 'viralmms', 'desisexvdo', 'desibabe', 'desihub', 'desibf', 'desileak49', 'mastiraja', 'latestdesimms', 'mmsgram', 'indianporn365'];
+        const normalizeSite = (n) => String(n || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const userPosts = posts.filter(p => {
+          const key = normalizeSite(p.siteName);
+          return userSites.some(s => normalizeSite(s) === key || key.includes(normalizeSite(s)));
+        });
         
         const header = `🌅 *Good Morning! Daily Top ${userPosts.length} – ${today}*\n\n` +
           `Your personalized daily digest from across the web! ☕\n\n` +

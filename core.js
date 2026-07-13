@@ -16,10 +16,13 @@ import {
   scrapeDesiBF,
   scrapeDesiLeak49,
   scrapeMastiRaja,
+  scrapeLatestDesiMms,
+  scrapeMmsGram,
+  scrapeIndianPorn365,
   getRequestHeaders,
   ensureClearance
 } from './scraper.js';
-import { getFavorites, saveFavorite, removeFavorite, clearFavorites, addScheduledUser, removeScheduledUser, toggleScheduledUser, getScheduledUser, updateScheduledUserSites, updateScheduledUserGroupTopics, updateScheduledUserForceChannel, isAdmin, addAdmin, removeAdmin, getForceChannel, setForceChannel, removeForceChannel, checkForceSubscribe, getAdmins } from './kv-storage.js';
+import { getFavorites, saveFavorite, removeFavorite, clearFavorites, addScheduledUser, removeScheduledUser, toggleScheduledUser, getScheduledUser, updateScheduledUserSites, updateScheduledUserGroupTopics, updateScheduledUserForceChannel, isAdmin, addAdmin, removeAdmin, getForceChannel, setForceChannel, removeForceChannel, checkForceSubscribe, getAdmins, updateScheduledUserGroups, upsertScheduledUserTopic } from './kv-storage.js';
 
 // Admin system + force channel globals (must be declared before initializeBotState)
 const adminUsers = new Set();
@@ -203,8 +206,8 @@ async function forceSubscribeMiddleware(ctx, next) {
   const userId = ctx.from?.id;
   if (!userId) return next();
   
-  // Skip for admins
-  if (adminUsers.has(userId)) return next();
+  // Skip for admins (IDs stored as strings)
+  if (adminUsers.has(String(userId))) return next();
   
   // Skip for certain commands
   if (ctx.message?.text?.startsWith('/start')) return next();
@@ -250,7 +253,7 @@ function mergeResults(resultsArray) {
 
 // Consolidated AIO Scraper (shuffles/combines posts from all sites)
 async function scrapeAIO(page = 1, filterType = 'latest') {
-  const limitPerSite = 3;
+  const limitPerSite = 2;
   const results = await Promise.all([
     scrapeDesiPorn(page, '', limitPerSite).catch(() => []),
     scrapeMMSBee(page, '', limitPerSite).catch(() => []),
@@ -262,7 +265,10 @@ async function scrapeAIO(page = 1, filterType = 'latest') {
     scrapeDesiHub(page, limitPerSite).catch(() => []),
     scrapeDesiBF(page, '', limitPerSite).catch(() => []),
     scrapeDesiLeak49(page, '', limitPerSite).catch(() => []),
-    scrapeMastiRaja(page, '', limitPerSite).catch(() => [])
+    scrapeMastiRaja(page, '', limitPerSite).catch(() => []),
+    scrapeLatestDesiMms(page, filterType === 'popular' ? 'most-viewed' : 'latest', limitPerSite).catch(() => []),
+    scrapeIndianPorn365(page, filterType === 'popular' ? 'most-viewed' : 'latest', limitPerSite).catch(() => []),
+    scrapeMmsGram(page, 'latest-trending', limitPerSite).catch(() => [])
   ]);
 
   const mergedPosts = mergeResults(results);
@@ -271,7 +277,7 @@ async function scrapeAIO(page = 1, filterType = 'latest') {
 
 // Consolidated AIO Tag/Text Search Scraper (combines search results from the searchable sites)
 async function searchAllSites(page = 1, query = '') {
-  const limitPerSite = 3;
+  const limitPerSite = 2;
   const results = await Promise.all([
     scrapeDesiPorn(page, query, limitPerSite).catch(() => []),
     scrapeMMSBee(page, query, limitPerSite).catch(() => []),
@@ -280,12 +286,37 @@ async function searchAllSites(page = 1, query = '') {
     scrapeDesiSexVdo(page, query, limitPerSite).catch(() => []),
     scrapeDesiBF(page, query, limitPerSite).catch(() => []),
     scrapeDesiLeak49(page, query, limitPerSite).catch(() => []),
-    scrapeMastiRaja(page, query, limitPerSite).catch(() => [])
+    scrapeMastiRaja(page, query, limitPerSite).catch(() => []),
+    scrapeLatestDesiMms(page, query, limitPerSite).catch(() => []),
+    scrapeIndianPorn365(page, query, limitPerSite).catch(() => [])
   ]);
 
   const mergedPosts = mergeResults(results);
   return mergedPosts.slice(0, 10);
 }
+
+const ALL_SITE_KEYS = [
+  'desiporn', 'mmsbee', 'desipapa', 'hotpic', 'viralmms', 'desisexvdo',
+  'desibabe', 'desihub', 'desibf', 'desileak49', 'mastiraja',
+  'latestdesimms', 'mmsgram', 'indianporn365'
+];
+
+const ALL_SITES_UI = [
+  { key: 'desiporn', label: 'DesiPorn 🔥' },
+  { key: 'mmsbee', label: 'MMSBee 🐝' },
+  { key: 'desipapa', label: 'DesiPapa 🎬' },
+  { key: 'hotpic', label: 'Hotpic 🔥' },
+  { key: 'viralmms', label: 'ViralMMS 🎬' },
+  { key: 'desisexvdo', label: 'DesiSexVdo 🎥' },
+  { key: 'desibabe', label: 'DesiBabe 🍑' },
+  { key: 'desihub', label: 'DesiHub 🇮🇳' },
+  { key: 'desibf', label: 'DesiBF 💋' },
+  { key: 'desileak49', label: 'DesiLeak49 💦' },
+  { key: 'mastiraja', label: 'MastiRaja 🍿' },
+  { key: 'latestdesimms', label: 'LatestDesiMMS 📹' },
+  { key: 'mmsgram', label: 'MMSGram 💬' },
+  { key: 'indianporn365', label: 'IndianPorn365 🇮🇳' }
+];
 
 // Generate the main menu dynamically based on chat settings
 function getMainMenu(chatId) {
@@ -306,7 +337,8 @@ function getMainMenu(chatId) {
     [Markup.button.callback('ViralMMS 🎬', 'site_viralmms'), Markup.button.callback('DesiSexVdo 🎥', 'site_desisexvdo')],
     [Markup.button.callback('DesiBabe 🍑', 'site_desibabe'), Markup.button.callback('DesiHub 🇮🇳', 'site_desihub')],
     [Markup.button.callback('DesiBF 💋', 'site_desibf'), Markup.button.callback('DesiLeak49 💦', 'site_desileak49')],
-    [Markup.button.callback('MastiRaja 🍿', 'site_mastiraja')],
+    [Markup.button.callback('MastiRaja 🍿', 'site_mastiraja'), Markup.button.callback('LatestDesiMMS 📹', 'site_latestdesimms')],
+    [Markup.button.callback('MMSGram 💬', 'site_mmsgram'), Markup.button.callback('IndianPorn365 🇮🇳', 'site_indianporn365')],
     // Predefined Tags
     [Markup.button.callback('Tamil 🇮🇳', 'tag_tamil'), Markup.button.callback('Mallu 🥥', 'tag_mallu')],
     [Markup.button.callback('South Indian 🌴', 'tag_south_indian'), Markup.button.callback('Young 👧', 'tag_young')],
@@ -341,6 +373,36 @@ async function sendPageSelector(ctx, siteName, siteKey) {
     parse_mode: 'Markdown',
     ...keyboard
   }).catch(() => {});
+}
+
+/** WP-tube filter options (LatestDesiMMS / IndianPorn365) */
+async function sendFilterSelector(ctx, siteName, siteKey) {
+  const text = `🎛️ *${siteName} — pick filter*\n\nEach site has own listing options:`;
+  const keyboard = Markup.inlineKeyboard([
+    [
+      Markup.button.callback('🆕 Latest', `opt_${siteKey}_latest`),
+      Markup.button.callback('👁 Most Viewed', `opt_${siteKey}_most-viewed`)
+    ],
+    [
+      Markup.button.callback('⭐ Popular', `opt_${siteKey}_popular`),
+      Markup.button.callback('⏱ Longest', `opt_${siteKey}_longest`)
+    ],
+    [Markup.button.callback('🎲 Random', `opt_${siteKey}_random`)],
+    [Markup.button.callback('🔙 Back to Main Menu', 'back_to_main')]
+  ]);
+  await ctx.editMessageText(text, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
+}
+
+/** MMSGram forum options */
+async function sendMmsGramOptions(ctx) {
+  const text = `💬 *MMSGram — pick forum*\n\nLatest trending / desi new videos:`;
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback('🔥 Latest Trending', 'opt_mmsgram_latest-trending')],
+    [Markup.button.callback('🆕 Desi New Videos HD/SD', 'opt_mmsgram_desi-new')],
+    [Markup.button.callback('⭐ Exclusive Trending', 'opt_mmsgram_exclusive')],
+    [Markup.button.callback('🔙 Back to Main Menu', 'back_to_main')]
+  ]);
+  await ctx.editMessageText(text, { parse_mode: 'Markdown', ...keyboard }).catch(() => {});
 }
 
 // Builds inline keyboard controls for pagination under the last post of a batch
@@ -464,16 +526,18 @@ bot.action('auto_send_menu', async (ctx) => {
   const user = await getScheduledUser(userId);
   
   const isEnabled = user?.enabled || false;
-  const siteCount = user?.sites?.length || 11;
+  const siteCount = user?.sites?.length || ALL_SITE_KEYS.length;
   const groupTopics = user?.groupTopics || false;
-  const forceChannel = user?.forceChannel || null;
+  const forceChannelUser = user?.forceChannel || null;
+  const fcDisplay = forceChannelUser || forceChannel || null;
 
   const text = `⚙️ *Auto-Send / Daily Digest Settings*\n\n` +
     `📬 Daily Digest: ${isEnabled ? '✅ Enabled' : '❌ Disabled'}\n` +
-    `🌐 Sites Selected: ${siteCount === 11 ? 'All (11)' : siteCount}/11\n` +
-    `📍 Group Topics: ${groupTopics ? '✅ Enabled' : '❌ Disabled'}\n` +
-    `🔒 Force Channel: ${forceChannel ? `@${forceChannel}` : 'None'}\n\n` +
-    `Configure your preferences below:`;
+    `🌐 Sites Selected: ${siteCount === ALL_SITE_KEYS.length ? `All (${ALL_SITE_KEYS.length})` : `${siteCount}/${ALL_SITE_KEYS.length}`}\n` +
+    `📍 Group Topics: ${groupTopics ? '✅ Enabled (tag→topic)' : '❌ Disabled'}\n` +
+    `🔒 Force Channel: ${fcDisplay ? `@${fcDisplay}` : 'None'}\n\n` +
+    `Group topics: Tamil topic gets Tamil content.\n` +
+    `Use /setgroup in group + /settopic Name inside topic.`;
 
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.callback(isEnabled ? '🔴 Disable Daily' : '🟢 Enable Daily', 'toggle_daily')],
@@ -506,16 +570,18 @@ bot.action('toggle_daily', async (ctx) => {
   // Refresh menu
   const user = await getScheduledUser(userId);
   const isEnabled = user?.enabled || false;
-  const siteCount = user?.sites?.length || 11;
+  const siteCount = user?.sites?.length || ALL_SITE_KEYS.length;
   const groupTopics = user?.groupTopics || false;
-  const forceChannel = user?.forceChannel || null;
+  const forceChannelUser = user?.forceChannel || null;
+  const fcDisplay = forceChannelUser || forceChannel || null;
 
   const text = `⚙️ *Auto-Send / Daily Digest Settings*\n\n` +
     `📬 Daily Digest: ${isEnabled ? '✅ Enabled' : '❌ Disabled'}\n` +
-    `🌐 Sites Selected: ${siteCount === 11 ? 'All (11)' : siteCount}/11\n` +
-    `📍 Group Topics: ${groupTopics ? '✅ Enabled' : '❌ Disabled'}\n` +
-    `🔒 Force Channel: ${forceChannel ? `@${forceChannel}` : 'None'}\n\n` +
-    `Configure your preferences below:`;
+    `🌐 Sites Selected: ${siteCount === ALL_SITE_KEYS.length ? `All (${ALL_SITE_KEYS.length})` : `${siteCount}/${ALL_SITE_KEYS.length}`}\n` +
+    `📍 Group Topics: ${groupTopics ? '✅ Enabled (tag→topic)' : '❌ Disabled'}\n` +
+    `🔒 Force Channel: ${fcDisplay ? `@${fcDisplay}` : 'None'}\n\n` +
+    `Group topics: Tamil topic gets Tamil content.\n` +
+    `Use /setgroup in group + /settopic Name inside topic.`;
 
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.callback(isEnabled ? '🔴 Disable Daily' : '🟢 Enable Daily', 'toggle_daily')],
@@ -534,24 +600,10 @@ bot.action('toggle_daily', async (ctx) => {
 bot.action('setting_sites', async (ctx) => {
   const userId = ctx.from.id;
   const user = await getScheduledUser(userId);
-  const userSites = user?.sites || ['desiporn', 'mmsbee', 'desipapa', 'hotpic', 'viralmms', 'desisexvdo', 'desibabe', 'desihub', 'desibf', 'desileak49', 'mastiraja'];
-  
-  const allSites = [
-    { key: 'desiporn', label: 'DesiPorn 🔥' },
-    { key: 'mmsbee', label: 'MMSBee 🐝' },
-    { key: 'desipapa', label: 'DesiPapa 🎬' },
-    { key: 'hotpic', label: 'Hotpic 🔥' },
-    { key: 'viralmms', label: 'ViralMMS 🎬' },
-    { key: 'desisexvdo', label: 'DesiSexVdo 🎥' },
-    { key: 'desibabe', label: 'DesiBabe 🍑' },
-    { key: 'desihub', label: 'DesiHub 🇮🇳' },
-    { key: 'desibf', label: 'DesiBF 💋' },
-    { key: 'desileak49', label: 'DesiLeak49 💦' },
-    { key: 'mastiraja', label: 'MastiRaja 🍿' }
-  ];
+  const userSites = user?.sites || [...ALL_SITE_KEYS];
 
   const keyboard = Markup.inlineKeyboard([
-    ...allSites.map(site => [
+    ...ALL_SITES_UI.map(site => [
       Markup.button.callback(
         `${userSites.includes(site.key) ? '✅' : '⬜'} ${site.label}`,
         `setting_site_${site.key}`
@@ -562,7 +614,7 @@ bot.action('setting_sites', async (ctx) => {
 
   await ctx.editMessageText(
     `🌐 *Select Sites for Daily Digest*\n\n` +
-    `Click to toggle each site. Selected: ${userSites.length}/11`,
+    `Click to toggle each site. Selected: ${userSites.length}/${ALL_SITE_KEYS.length}`,
     { parse_mode: 'Markdown', ...keyboard }
   ).catch(() => {});
 });
@@ -571,7 +623,7 @@ bot.action(/^setting_site_(.+)$/, async (ctx) => {
   const userId = ctx.from.id;
   const siteKey = ctx.match[1];
   const user = await getScheduledUser(userId);
-  const userSites = user?.sites || ['desiporn', 'mmsbee', 'desipapa', 'hotpic', 'viralmms', 'desisexvdo', 'desibabe', 'desihub', 'desibf', 'desileak49', 'mastiraja'];
+  const userSites = user?.sites || [...ALL_SITE_KEYS];
   
   const idx = userSites.indexOf(siteKey);
   if (idx >= 0) {
@@ -581,24 +633,9 @@ bot.action(/^setting_site_(.+)$/, async (ctx) => {
   }
   
   await updateScheduledUserSites(userId, userSites);
-  
-  // Refresh keyboard
-  const allSites = [
-    { key: 'desiporn', label: 'DesiPorn 🔥' },
-    { key: 'mmsbee', label: 'MMSBee 🐝' },
-    { key: 'desipapa', label: 'DesiPapa 🎬' },
-    { key: 'hotpic', label: 'Hotpic 🔥' },
-    { key: 'viralmms', label: 'ViralMMS 🎬' },
-    { key: 'desisexvdo', label: 'DesiSexVdo 🎥' },
-    { key: 'desibabe', label: 'DesiBabe 🍑' },
-    { key: 'desihub', label: 'DesiHub 🇮🇳' },
-    { key: 'desibf', label: 'DesiBF 💋' },
-    { key: 'desileak49', label: 'DesiLeak49 💦' },
-    { key: 'mastiraja', label: 'MastiRaja 🍿' }
-  ];
 
   const keyboard = Markup.inlineKeyboard([
-    ...allSites.map(site => [
+    ...ALL_SITES_UI.map(site => [
       Markup.button.callback(
         `${userSites.includes(site.key) ? '✅' : '⬜'} ${site.label}`,
         `setting_site_${site.key}`
@@ -616,21 +653,27 @@ bot.action('toggle_group_topics', async (ctx) => {
   const user = await getScheduledUser(userId);
   const newValue = !(user?.groupTopics || false);
   
-  await updateScheduledUserGroupTopics(userId, newValue);
+  // auto-create scheduled user if missing so non-admins can use topics
+  if (!user) {
+    await addScheduledUser(userId, ctx.chat.id, { groupTopics: newValue });
+  } else {
+    await updateScheduledUserGroupTopics(userId, newValue);
+  }
   
   // Refresh menu
   const updatedUser = await getScheduledUser(userId);
   const isEnabled = updatedUser?.enabled || false;
-  const siteCount = updatedUser?.sites?.length || 11;
+  const siteCount = updatedUser?.sites?.length || ALL_SITE_KEYS.length;
   const groupTopics = updatedUser?.groupTopics || false;
-  const forceChannel = updatedUser?.forceChannel || null;
+  const forceChannelUser = updatedUser?.forceChannel || null;
+  const fcDisplay = forceChannelUser || forceChannel || null;
 
   const text = `⚙️ *Auto-Send / Daily Digest Settings*\n\n` +
     `📬 Daily Digest: ${isEnabled ? '✅ Enabled' : '❌ Disabled'}\n` +
-    `🌐 Sites Selected: ${siteCount === 11 ? 'All (11)' : siteCount}/11\n` +
-    `📍 Group Topics: ${groupTopics ? '✅ Enabled' : '❌ Disabled'}\n` +
-    `🔒 Force Channel: ${forceChannel ? `@${forceChannel}` : 'None'}\n\n` +
-    `Configure your preferences below:`;
+    `🌐 Sites Selected: ${siteCount === ALL_SITE_KEYS.length ? `All (${ALL_SITE_KEYS.length})` : `${siteCount}/${ALL_SITE_KEYS.length}`}\n` +
+    `📍 Group Topics: ${groupTopics ? '✅ Enabled (tag→topic)' : '❌ Disabled'}\n` +
+    `🔒 Force Channel: ${fcDisplay ? `@${fcDisplay}` : 'None'}\n\n` +
+    `Tamil topic ← Tamil tag content. Use /setgroup + /settopic.`;
 
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.callback(isEnabled ? '🔴 Disable Daily' : '🟢 Enable Daily', 'toggle_daily')],
@@ -649,7 +692,13 @@ bot.action('toggle_group_topics', async (ctx) => {
 });
 
 bot.action('set_force_channel', async (ctx) => {
-  await ctx.answerCbQuery('Use /forcechannel @channelusername to set').catch(() => {});
+  await ctx.answerCbQuery().catch(() => {});
+  await ctx.reply(
+    '🔒 *Set Force Channel*\n\n' +
+    'Send:\n`/forcechannel @yourchannel`\n\n' +
+    'Anyone can set. Admin bare `/forcechannel` removes it.',
+    { parse_mode: 'Markdown' }
+  ).catch(() => {});
 });
 
 // Setup site triggers to load page selectors
@@ -664,6 +713,24 @@ bot.action('site_desihub', (ctx) => sendPageSelector(ctx, 'DesiHub', 'desihub'))
 bot.action('site_desibf', (ctx) => sendPageSelector(ctx, 'DesiBF', 'desibf'));
 bot.action('site_desileak49', (ctx) => sendPageSelector(ctx, 'DesiLeak49', 'desileak49'));
 bot.action('site_mastiraja', (ctx) => sendPageSelector(ctx, 'MastiRaja', 'mastiraja'));
+bot.action('site_latestdesimms', (ctx) => sendFilterSelector(ctx, 'LatestDesiMMS', 'latestdesimms'));
+bot.action('site_indianporn365', (ctx) => sendFilterSelector(ctx, 'IndianPorn365', 'indianporn365'));
+bot.action('site_mmsgram', (ctx) => sendMmsGramOptions(ctx));
+
+// Filter/forum option → page selector (siteKey becomes site_filter)
+bot.action(/^opt_(latestdesimms|indianporn365)_(latest|most-viewed|popular|longest|random)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const site = ctx.match[1];
+  const filter = ctx.match[2];
+  const label = site === 'latestdesimms' ? 'LatestDesiMMS' : 'IndianPorn365';
+  await sendPageSelector(ctx, `${label} (${filter})`, `${site}_${filter}`);
+});
+
+bot.action(/^opt_mmsgram_(latest-trending|desi-new|exclusive)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const forum = ctx.match[1];
+  await sendPageSelector(ctx, `MMSGram (${forum})`, `mmsgram_${forum}`);
+});
 
 bot.action(/^tag_(.+)$/, async (ctx) => {
   const tagKey = ctx.match[1];
@@ -688,6 +755,10 @@ bot.action(/^tag_(.+)$/, async (ctx) => {
     [
       Markup.button.callback('DesiLeak49 💦', `search_desileak49_${tagKey}_1`),
       Markup.button.callback('MastiRaja 🍿', `search_mastiraja_${tagKey}_1`)
+    ],
+    [
+      Markup.button.callback('LatestDesiMMS 📹', `search_latestdesimms_${tagKey}_1`),
+      Markup.button.callback('IndianPorn365 🇮🇳', `search_indianporn365_${tagKey}_1`)
     ],
     [Markup.button.callback('🔙 Back to Main Menu', 'back_to_main')]
   ]);
@@ -741,6 +812,10 @@ bot.on('text', async (ctx) => {
         Markup.button.callback('DesiLeak49 💦', `search_desileak49_${tagKey}_1`),
         Markup.button.callback('MastiRaja 🍿', `search_mastiraja_${tagKey}_1`)
       ],
+      [
+        Markup.button.callback('LatestDesiMMS 📹', `search_latestdesimms_${tagKey}_1`),
+        Markup.button.callback('IndianPorn365 🇮🇳', `search_indianporn365_${tagKey}_1`)
+      ],
       [Markup.button.callback('🔙 Back to Main Menu', 'back_to_main')]
     ]);
 
@@ -782,6 +857,10 @@ bot.on('text', async (ctx) => {
     [
       Markup.button.callback('DesiLeak49 💦', `csearch_desileak49_${queryId}_1`),
       Markup.button.callback('MastiRaja 🍿', `csearch_mastiraja_${queryId}_1`)
+    ],
+    [
+      Markup.button.callback('LatestDesiMMS 📹', `csearch_latestdesimms_${queryId}_1`),
+      Markup.button.callback('IndianPorn365 🇮🇳', `csearch_indianporn365_${queryId}_1`)
     ],
     [Markup.button.callback('🔙 Back to Main Menu', 'back_to_main')]
   ]);
@@ -880,12 +959,12 @@ async function handleScrapeAction(ctx, siteName, page, scrapeFn, tag = '', query
         } catch (albumErr) {
           console.error('Album send failed, falling back to individual:', albumErr.message);
           // Fallback: send first video individually
-          await sendSinglePost(ctx, post, post._albumVideos[0], i, page, tag, siteName, sentMessageIds, i === posts.length - 1);
+          await sendSinglePost(ctx, post, post._albumVideos[0], i, page, tag, siteName, sentMessageIds, i === posts.length - 1, queryId);
         }
       } else {
         // Regular single video post
         const videoData = post._albumVideos?.[0] || post;
-        await sendSinglePost(ctx, post, videoData, i, page, tag, siteName, sentMessageIds, i === posts.length - 1);
+        await sendSinglePost(ctx, post, videoData, i, page, tag, siteName, sentMessageIds, i === posts.length - 1, queryId);
       }
     }
 
@@ -920,7 +999,7 @@ async function handleScrapeAction(ctx, siteName, page, scrapeFn, tag = '', query
 }
 
 // Helper: send a single video post (used for regular posts + album fallback)
-async function sendSinglePost(ctx, post, videoData, index, page, tag, siteName, sentMessageIds, isLast) {
+async function sendSinglePost(ctx, post, videoData, index, page, tag, siteName, sentMessageIds, isLast, queryId = '') {
   const caption = `🔥 *${index + 1}. ${videoData.title}*\n\n` +
     `🌐 *Source*: ${post.siteName || siteName}\n` +
     `📄 *Page*: ${page}\n` +
@@ -1037,69 +1116,73 @@ async function sendSinglePost(ctx, post, videoData, index, page, tag, siteName, 
   }
 }
 
-// Register generic page scraper action handler
-bot.action(/^scrape_([a-z0-9_]+)_(\d+)$/, async (ctx) => {
-  const siteKey = ctx.match[1];
-  const page = parseInt(ctx.match[2], 10);
-  
-  let siteName = '';
-  let scrapeFn = null;
-
-  if (siteKey === 'trending_all_in_one') {
-    siteName = 'Trending (All-in-One)';
-    scrapeFn = (p) => scrapeAIO(p, 'trending');
-  } else if (siteKey === 'popular_all_in_one') {
-    siteName = 'Popular (All-in-One)';
-    scrapeFn = (p) => scrapeAIO(p, 'popular');
-  } else if (siteKey === 'desiporn') {
-    siteName = 'DesiPorn';
-    scrapeFn = scrapeDesiPorn;
-  } else if (siteKey === 'viralmms') {
-    siteName = 'ViralMMS';
-    scrapeFn = scrapeViralMms;
-  } else if (siteKey === 'desisexvdo') {
-    siteName = 'DesiSexVdo';
-    scrapeFn = scrapeDesiSexVdo;
-  } else if (siteKey === 'desibabe') {
-    siteName = 'DesiBabe';
-    scrapeFn = scrapeDesiBabe;
-  } else if (siteKey === 'desihub') {
-    siteName = 'DesiHub';
-    scrapeFn = scrapeDesiHub;
-  } else if (siteKey === 'desibf') {
-    siteName = 'DesiBF';
-    scrapeFn = scrapeDesiBF;
-  } else if (siteKey === 'desileak49') {
-    siteName = 'DesiLeak49';
-    scrapeFn = scrapeDesiLeak49;
-  } else if (siteKey === 'mmsbee') {
-    siteName = 'MMSBee';
-    scrapeFn = scrapeMMSBee;
-  } else if (siteKey === 'desipapa') {
-    siteName = 'DesiPapa';
-    scrapeFn = scrapeDesiPapa;
-  } else if (siteKey === 'hotpic') {
-    siteName = 'Hotpic';
-    scrapeFn = scrapeHotpic;
-  } else if (siteKey === 'mastiraja') {
-    siteName = 'MastiRaja';
-    scrapeFn = scrapeMastiRaja;
+function resolveScrapeTarget(siteKey) {
+  // compound keys: latestdesimms_most-viewed | mmsgram_desi-new
+  if (siteKey.startsWith('latestdesimms_')) {
+    const filter = siteKey.slice('latestdesimms_'.length);
+    return {
+      siteName: `LatestDesiMMS (${filter})`,
+      scrapeFn: (p) => scrapeLatestDesiMms(p, filter)
+    };
+  }
+  if (siteKey.startsWith('indianporn365_')) {
+    const filter = siteKey.slice('indianporn365_'.length);
+    return {
+      siteName: `IndianPorn365 (${filter})`,
+      scrapeFn: (p) => scrapeIndianPorn365(p, filter)
+    };
+  }
+  if (siteKey.startsWith('mmsgram_')) {
+    const forum = siteKey.slice('mmsgram_'.length);
+    return {
+      siteName: `MMSGram (${forum})`,
+      scrapeFn: (p) => scrapeMmsGram(p, forum)
+    };
   }
 
-  if (scrapeFn) {
-    await handleScrapeAction(ctx, siteName, page, scrapeFn);
+  const map = {
+    trending_all_in_one: { siteName: 'Trending (All-in-One)', scrapeFn: (p) => scrapeAIO(p, 'trending') },
+    popular_all_in_one: { siteName: 'Popular (All-in-One)', scrapeFn: (p) => scrapeAIO(p, 'popular') },
+    desiporn: { siteName: 'DesiPorn', scrapeFn: scrapeDesiPorn },
+    viralmms: { siteName: 'ViralMMS', scrapeFn: scrapeViralMms },
+    desisexvdo: { siteName: 'DesiSexVdo', scrapeFn: scrapeDesiSexVdo },
+    desibabe: { siteName: 'DesiBabe', scrapeFn: scrapeDesiBabe },
+    desihub: { siteName: 'DesiHub', scrapeFn: scrapeDesiHub },
+    desibf: { siteName: 'DesiBF', scrapeFn: scrapeDesiBF },
+    desileak49: { siteName: 'DesiLeak49', scrapeFn: scrapeDesiLeak49 },
+    mmsbee: { siteName: 'MMSBee', scrapeFn: scrapeMMSBee },
+    desipapa: { siteName: 'DesiPapa', scrapeFn: scrapeDesiPapa },
+    hotpic: { siteName: 'Hotpic', scrapeFn: scrapeHotpic },
+    mastiraja: { siteName: 'MastiRaja', scrapeFn: scrapeMastiRaja },
+    latestdesimms: { siteName: 'LatestDesiMMS', scrapeFn: (p) => scrapeLatestDesiMms(p, 'most-viewed') },
+    indianporn365: { siteName: 'IndianPorn365', scrapeFn: (p) => scrapeIndianPorn365(p, 'latest') },
+    mmsgram: { siteName: 'MMSGram', scrapeFn: (p) => scrapeMmsGram(p, 'latest-trending') },
+    all: { siteName: 'All Sites', scrapeFn: searchAllSites }
+  };
+  return map[siteKey] || null;
+}
+
+// Register generic page scraper action handler (allow hyphens in site/filter keys)
+bot.action(/^scrape_([a-z0-9_-]+)_(\d+)$/, async (ctx) => {
+  const siteKey = ctx.match[1];
+  const page = parseInt(ctx.match[2], 10);
+  const target = resolveScrapeTarget(siteKey);
+
+  if (target) {
+    await handleScrapeAction(ctx, target.siteName, page, target.scrapeFn);
   } else {
     await ctx.answerCbQuery('Invalid site selection.').catch(() => {});
   }
 });
 
-const validSitesPattern = 'all|desiporn|mmsbee|desipapa|hotpic|viralmms|desisexvdo|desibabe|desihub|desibf|desileak49|mastiraja|trending_all_in_one|popular_all_in_one';
+const validSitesPattern = 'all|desiporn|mmsbee|desipapa|hotpic|viralmms|desisexvdo|desibabe|desihub|desibf|desileak49|mastiraja|latestdesimms|mmsgram|indianporn365|trending_all_in_one|popular_all_in_one';
 
 // Register generic tag search handler
 bot.action(new RegExp('^search_(' + validSitesPattern + ')_(.+)_(\\d+)$'), async (ctx) => {
   const siteKey = ctx.match[1];
   const tagKey = ctx.match[2];
   const page = parseInt(ctx.match[3], 10);
+  const tagLabel = TAG_LABELS[tagKey] || tagKey.replace(/_/g, ' ');
 
   let siteName = '';
   let scrapeFn = null;
@@ -1107,33 +1190,19 @@ bot.action(new RegExp('^search_(' + validSitesPattern + ')_(.+)_(\\d+)$'), async
   if (siteKey === 'all') {
     siteName = 'All Sites';
     scrapeFn = searchAllSites;
-  } else if (siteKey === 'desiporn') {
-    siteName = 'DesiPorn';
-    scrapeFn = scrapeDesiPorn;
-  } else if (siteKey === 'mmsbee') {
-    siteName = 'MMSBee';
-    scrapeFn = scrapeMMSBee;
-  } else if (siteKey === 'desipapa') {
-    siteName = 'DesiPapa';
-    scrapeFn = scrapeDesiPapa;
-  } else if (siteKey === 'hotpic') {
-    siteName = 'Hotpic';
-    scrapeFn = scrapeHotpic;
-  } else if (siteKey === 'desisexvdo') {
-    siteName = 'DesiSexVdo';
-    scrapeFn = scrapeDesiSexVdo;
-  } else if (siteKey === 'desibf') {
-    siteName = 'DesiBF';
-    scrapeFn = scrapeDesiBF;
-  } else if (siteKey === 'desileak49') {
-    siteName = 'DesiLeak49';
-    scrapeFn = scrapeDesiLeak49;
-  } else if (siteKey === 'mastiraja') {
-    siteName = 'MastiRaja';
-    scrapeFn = scrapeMastiRaja;
+  } else if (siteKey === 'latestdesimms') {
+    siteName = 'LatestDesiMMS';
+    scrapeFn = (p, q) => scrapeLatestDesiMms(p, q);
+  } else if (siteKey === 'indianporn365') {
+    siteName = 'IndianPorn365';
+    scrapeFn = (p, q) => scrapeIndianPorn365(p, q);
+  } else {
+    const target = resolveScrapeTarget(siteKey);
+    if (target && siteKey !== 'trending_all_in_one' && siteKey !== 'popular_all_in_one') {
+      siteName = target.siteName;
+      scrapeFn = target.scrapeFn;
+    }
   }
-
-  const tagLabel = TAG_LABELS[tagKey] || tagKey.replace(/_/g, ' ');
 
   if (scrapeFn) {
     await handleScrapeAction(ctx, siteName, page, scrapeFn, tagLabel);
@@ -1160,30 +1229,18 @@ bot.action(new RegExp('^csearch_(' + validSitesPattern + ')_(.+)_(\\d+)$'), asyn
   if (siteKey === 'all') {
     siteName = 'All Sites';
     scrapeFn = searchAllSites;
-  } else if (siteKey === 'desiporn') {
-    siteName = 'DesiPorn';
-    scrapeFn = scrapeDesiPorn;
-  } else if (siteKey === 'desisexvdo') {
-    siteName = 'DesiSexVdo';
-    scrapeFn = scrapeDesiSexVdo;
-  } else if (siteKey === 'desibf') {
-    siteName = 'DesiBF';
-    scrapeFn = scrapeDesiBF;
-  } else if (siteKey === 'desileak49') {
-    siteName = 'DesiLeak49';
-    scrapeFn = scrapeDesiLeak49;
-  } else if (siteKey === 'mmsbee') {
-    siteName = 'MMSBee';
-    scrapeFn = scrapeMMSBee;
-  } else if (siteKey === 'desipapa') {
-    siteName = 'DesiPapa';
-    scrapeFn = scrapeDesiPapa;
-  } else if (siteKey === 'hotpic') {
-    siteName = 'Hotpic';
-    scrapeFn = scrapeHotpic;
-  } else if (siteKey === 'mastiraja') {
-    siteName = 'MastiRaja';
-    scrapeFn = scrapeMastiRaja;
+  } else if (siteKey === 'latestdesimms') {
+    siteName = 'LatestDesiMMS';
+    scrapeFn = (p, q) => scrapeLatestDesiMms(p, q);
+  } else if (siteKey === 'indianporn365') {
+    siteName = 'IndianPorn365';
+    scrapeFn = (p, q) => scrapeIndianPorn365(p, q);
+  } else {
+    const target = resolveScrapeTarget(siteKey);
+    if (target) {
+      siteName = target.siteName;
+      scrapeFn = target.scrapeFn;
+    }
   }
 
   if (scrapeFn) {
@@ -1298,10 +1355,13 @@ bot.action('check_force_subscribe', async (ctx) => {
 });
 
 // ─── Admin commands ────────────────────────────────────────────────────────────
+function isBotAdmin(userId) {
+  return adminUsers.has(String(userId));
+}
+
 bot.command('adduser', async (ctx) => {
   const userId = ctx.from.id;
-  const isAdmin = adminUsers.has(userId);
-  if (!isAdmin) return ctx.reply('❌ Admin only.').catch(() => {});
+  if (!isBotAdmin(userId)) return ctx.reply('❌ Admin only.').catch(() => {});
   
   const text = ctx.message.text.split(' ')[1];
   if (!text) return ctx.reply('Usage: /adduser @username or /adduser user_id').catch(() => {});
@@ -1313,8 +1373,7 @@ bot.command('adduser', async (ctx) => {
 
 bot.command('removeuser', async (ctx) => {
   const userId = ctx.from.id;
-  const isAdmin = adminUsers.has(userId);
-  if (!isAdmin) return ctx.reply('❌ Admin only.').catch(() => {});
+  if (!isBotAdmin(userId)) return ctx.reply('❌ Admin only.').catch(() => {});
   
   const text = ctx.message.text.split(' ')[1];
   if (!text) return ctx.reply('Usage: /removeuser @username or /removeuser user_id').catch(() => {});
@@ -1324,24 +1383,27 @@ bot.command('removeuser', async (ctx) => {
   await ctx.reply(`✅ Removed ${targetId} from admins`).catch(() => {});
 });
 
+// Any user can set force channel (global). Admin required only to remove.
 bot.command('forcechannel', async (ctx) => {
   const userId = ctx.from.id;
-  const isAdmin = adminUsers.has(userId);
-  if (!isAdmin) return ctx.reply('❌ Admin only.').catch(() => {});
-  
   const text = ctx.message.text.split(' ')[1];
+
   if (!text) {
+    if (!isBotAdmin(userId)) {
+      return ctx.reply('Usage: /forcechannel @channelusername\n(Only admin can remove with bare /forcechannel)').catch(() => {});
+    }
     await removeForceChannel();
-    forceChannel = null; // Update global variable
+    forceChannel = null;
     return ctx.reply('✅ Force channel removed').catch(() => {});
   }
-  
+
   const channelUsername = text.startsWith('@') ? text.slice(1) : text;
-  // Try to get channel ID
   try {
     const chatInfo = await bot.telegram.getChat(`@${channelUsername}`);
     await setForceChannel(chatInfo.id, channelUsername);
-    forceChannel = channelUsername; // Update global variable
+    forceChannel = channelUsername;
+    // also store on scheduled user if present
+    await updateScheduledUserForceChannel(userId, channelUsername).catch(() => {});
     await ctx.reply(`✅ Force channel set to @${channelUsername} (ID: ${chatInfo.id})`).catch(() => {});
   } catch (e) {
     await ctx.reply(`❌ Could not find channel @${channelUsername}: ${e.message}`).catch(() => {});
@@ -1350,8 +1412,7 @@ bot.command('forcechannel', async (ctx) => {
 
 bot.command('broadcast', async (ctx) => {
   const userId = ctx.from.id;
-  const isAdmin = adminUsers.has(userId);
-  if (!isAdmin) return ctx.reply('❌ Admin only.').catch(() => {});
+  if (!isBotAdmin(userId)) return ctx.reply('❌ Admin only.').catch(() => {});
   
   const message = ctx.message.text.slice(10).trim(); // '/broadcast '.length = 10
   if (!message) return ctx.reply('Usage: /broadcast Your message here').catch(() => {});
@@ -1453,18 +1514,73 @@ bot.command('topicinfo', async (ctx) => {
     ).catch(() => {});
   }
   
-  // Success - we have a thread ID
   let response = `📍 *Forum Topic Thread Info*\n\n`;
   response += `🆔 *Chat ID*: \`${chatId}\`\n`;
   response += `🧵 *Thread ID*: \`${threadId}\`\n\n`;
-  response += `✅ This is the info needed for group topics auto-send!\n\n`;
-  response += `**Next Steps:**\n`;
-  response += `1. Copy both IDs above\n`;
-  response += `2. Tell me: "chatId: ${chatId}, threadId: ${threadId}"\n`;
-  response += `3. I'll update your config to send to this topic\n`;
-  response += `4. Bot will auto-send matching content to this topic every 6 hours`;
+  response += `Register with:\n\`/settopic Tamil\` (use topic tag name)\n`;
+  response += `Auto-send matches topic name to content tags.`;
   
   await ctx.replyWithMarkdown(response).catch(() => {});
+});
+
+// ─── /setgroup — register current group for topic auto-send (any user) ────────
+bot.command('setgroup', async (ctx) => {
+  if (ctx.chat.type === 'private') {
+    return ctx.reply('❌ Run /setgroup inside the target group/supergroup.').catch(() => {});
+  }
+  const userId = ctx.from.id;
+  const chatId = ctx.chat.id;
+  let user = await getScheduledUser(userId);
+  if (!user) {
+    await addScheduledUser(userId, chatId, { groupTopics: true });
+    user = await getScheduledUser(userId);
+  }
+  const groups = user?.groups || [];
+  if (!groups.find(g => String(g.chatId) === String(chatId))) {
+    groups.push({ chatId: String(chatId), topics: [] });
+  }
+  await updateScheduledUserGroups(userId, groups);
+  await updateScheduledUserGroupTopics(userId, true);
+  await ctx.replyWithMarkdown(
+    `✅ Group registered for topic auto-send\n` +
+    `🆔 Chat ID: \`${chatId}\`\n\n` +
+    `Next: go *inside* each forum topic and run:\n` +
+    `\`/settopic Tamil\`\n` +
+    `\`/settopic Mallu\`\n` +
+    `Name must match content tag.`
+  ).catch(() => {});
+});
+
+// ─── /settopic <Name> — bind current thread to a tag name (any user) ──────────
+bot.command('settopic', async (ctx) => {
+  const chatId = ctx.chat.id;
+  const threadId = ctx.message.message_thread_id;
+  const userId = ctx.from.id;
+
+  if (ctx.chat.type === 'private' || !threadId) {
+    return ctx.reply(
+      '❌ Run /settopic *inside* a forum topic thread.\n' +
+      'Example: /settopic Tamil'
+    ).catch(() => {});
+  }
+
+  const name = (ctx.message.text.split(/\s+/).slice(1).join(' ') || '').trim();
+  if (!name) {
+    return ctx.reply('Usage: /settopic Tamil\n(topic name = content tag)').catch(() => {});
+  }
+
+  await upsertScheduledUserTopic(userId, chatId, {
+    name,
+    message_thread_id: threadId
+  });
+
+  await ctx.replyWithMarkdown(
+    `✅ Topic mapped\n` +
+    `🏷 *Name/Tag*: ${name}\n` +
+    `🧵 *Thread*: \`${threadId}\`\n` +
+    `🆔 *Chat*: \`${chatId}\`\n\n` +
+    `Auto-send will push *${name}* content into this topic.`
+  ).catch(() => {});
 });
 
 // ─── Save / Unsave handlers ───────────────────────────────────────────────────

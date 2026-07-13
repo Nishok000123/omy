@@ -1,87 +1,101 @@
 /**
  * api/groupsend.js
- * Vercel cron endpoint - sends trending videos to group topics by tag matching.
- * Schedule: runs every 6 hours (0 */6 * * *)
- * 
- * For each user who has groupTopics enabled:
- * 1. Get groups where bot is admin
- * 2. For each topic in group, match topic name to tags
- * 3. Scrape trending from each site
- * 4. Send matching videos to matching topics
+ * Vercel cron — auto-send to forum topics by TAG NAME match.
+ * Tamil topic → scrape/search "Tamil" content → send to that thread.
+ * Schedule: every 6 hours
  */
-import { Telegraf } from 'telegraf';
 import {
   scrapeDesiPorn, scrapeMMSBee, scrapeDesiPapa, scrapeHotpic,
   scrapeViralMms, scrapeDesiSexVdo, scrapeDesiBabe,
-  scrapeDesiHub, scrapeDesiBF, scrapeDesiLeak49, scrapeMastiRaja
+  scrapeDesiHub, scrapeDesiBF, scrapeDesiLeak49, scrapeMastiRaja,
+  scrapeLatestDesiMms, scrapeIndianPorn365, scrapeMmsGram
 } from '../scraper.js';
 import { getScheduledUsers } from '../kv-storage.js';
 
-// Tag labels mapping
-const TAG_LABELS = {
-  tamil: 'Tamil',
-  mallu: 'Mallu',
-  south_indian: 'South Indian',
-  young: 'Young',
-  // Add more as needed
-};
+/** Search scrapers that accept a text query */
+async function scrapeByTag(tag, limitPerSite = 3) {
+  const q = String(tag || '').trim();
+  if (!q) return [];
 
-// Site name to tag keywords mapping
-const SITE_TAG_KEYWORDS = {
-  desiporn: ['tamil', 'mallu', 'south', 'indian', 'desi', 'bhabhi', 'aunty'],
-  mmsbee: ['tamil', 'mallu', 'indian', 'desi', 'bhabhi'],
-  desipapa: ['tamil', 'mallu', 'indian', 'desi', 'bhabhi', 'aunty'],
-  hotpic: ['tamil', 'indian', 'desi', 'viral', 'leaked'],
-  viralmms: ['tamil', 'indian', 'desi', 'viral', 'mms'],
-  desisexvdo: ['tamil', 'mallu', 'indian', 'desi', 'bhabhi'],
-  desibabe: ['tamil', 'indian', 'desi', 'babe'],
-  desihub: ['tamil', 'indian', 'desi', 'hub'],
-  desibf: ['tamil', 'indian', 'desi', 'bf', 'girlfriend'],
-  desileak49: ['tamil', 'indian', 'desi', 'leak', 'leaked'],
-  mastiraja: ['tamil', 'mallu', 'indian', 'desi', 'raja']
-};
+  const results = await Promise.allSettled([
+    scrapeDesiPorn(1, q, limitPerSite),
+    scrapeMMSBee(1, q, limitPerSite),
+    scrapeDesiPapa(1, q, limitPerSite),
+    scrapeDesiSexVdo(1, q, limitPerSite),
+    scrapeDesiBF(1, q, limitPerSite),
+    scrapeDesiLeak49(1, q, limitPerSite),
+    scrapeMastiRaja(1, q, limitPerSite),
+    scrapeLatestDesiMms(1, q, limitPerSite),
+    scrapeIndianPorn365(1, q, limitPerSite),
+    // non-search sites: pull latest then filter by title
+    scrapeHotpic(1, limitPerSite),
+    scrapeViralMms(1, limitPerSite),
+    scrapeDesiBabe(1, limitPerSite),
+    scrapeDesiHub(1, limitPerSite),
+    scrapeMmsGram(1, 'desi-new', limitPerSite)
+  ]);
 
-function matchTopicToTags(topicName, siteName) {
-  const keywords = SITE_TAG_KEYWORDS[siteName] || [];
-  const topicLower = topicName.toLowerCase();
-  
-  // Check if topic name contains any keyword
-  for (const kw of keywords) {
-    if (topicLower.includes(kw.toLowerCase())) {
-      return kw;
-    }
-  }
-  return null;
+  const posts = results
+    .filter(r => r.status === 'fulfilled')
+    .flatMap(r => r.value || [])
+    .filter(p => p && p.title && (p.videoUrl || p.url));
+
+  const tagLower = q.toLowerCase();
+  // Prefer title/tag match; keep some search hits even if title miss
+  const matched = posts.filter(p =>
+    p.title.toLowerCase().includes(tagLower) ||
+    (p.url || '').toLowerCase().includes(tagLower)
+  );
+  const pool = matched.length ? matched : posts;
+  // shuffle lightly
+  return pool.sort(() => Math.random() - 0.5).slice(0, 6);
 }
 
-async function sendVideoToTopic(bot, chatId, topicId, video, siteName) {
-  const caption = `🔥 *${video.title}*\n\n` +
-    `🌐 *Source*: ${siteName}\n` +
-    `📥 *Direct Video*: ${video.videoUrl}`;
-  
-  const keyboard = Markup.inlineKeyboard([
-    [Markup.button.url('🎥 Watch', video.videoUrl)],
-    [Markup.button.callback('⬇️ Download', `dl_${getShortId(video.videoUrl)}`)]
-  ]);
-  
+async function sendPostToTopic(bot, chatId, topicId, post, tagName) {
+  const watch = post.videoUrl || post.url;
+  const caption =
+    `🔥 *${escapeMd(post.title)}*\n\n` +
+    `🏷 *Topic*: ${escapeMd(tagName)}\n` +
+    `🌐 *Source*: ${escapeMd(post.siteName || 'Unknown')}\n` +
+    (watch ? `📥 [Watch](${watch})` : '');
+
+  const opts = {
+    caption,
+    parse_mode: 'Markdown',
+    message_thread_id: topicId
+  };
+
   try {
-    // Try sending as video
-    await bot.telegram.sendVideo(chatId, video.videoUrl, {
-      caption,
-      parse_mode: 'Markdown',
-      message_thread_id: topicId,
-      ...keyboard
-    });
+    if (post.videoUrl && /\.mp4(\?|$)/i.test(post.videoUrl)) {
+      await bot.telegram.sendVideo(chatId, post.videoUrl, opts);
+    } else if (post.thumbnail && !String(post.thumbnail).startsWith('data:')) {
+      await bot.telegram.sendPhoto(chatId, post.thumbnail, opts);
+    } else {
+      await bot.telegram.sendMessage(chatId, caption, {
+        parse_mode: 'Markdown',
+        message_thread_id: topicId,
+        disable_web_page_preview: false
+      });
+    }
     return true;
   } catch (err) {
-    console.error(`Failed to send video to topic ${topicId}:`, err.message);
-    return false;
+    // fallback plain text
+    try {
+      await bot.telegram.sendMessage(
+        chatId,
+        `${post.title}\n${tagName}\n${watch || ''}`,
+        { message_thread_id: topicId }
+      );
+      return true;
+    } catch (e2) {
+      console.error(`Failed topic ${topicId}:`, err.message);
+      return false;
+    }
   }
 }
 
-function getShortId(url) {
-  // Simple hash for callback data
-  return Buffer.from(url).toString('base64').slice(0, 32);
+function escapeMd(s) {
+  return String(s || '').replace(/([_*`\[])/g, '\\$1');
 }
 
 export default async function handler(req, res) {
@@ -98,7 +112,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { Telegraf, Markup } = await import('telegraf');
+    const { Telegraf } = await import('telegraf');
     const bot = new Telegraf(BOT_TOKEN);
 
     const users = await getScheduledUsers();
@@ -110,66 +124,47 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, message: 'No users with group topics enabled' });
     }
 
-    // Define sites to scrape
-    const sites = [
-      { key: 'desiporn', fn: scrapeDesiPorn },
-      { key: 'mmsbee', fn: scrapeMMSBee },
-      { key: 'desipapa', fn: scrapeDesiPapa },
-      { key: 'hotpic', fn: scrapeHotpic },
-      { key: 'viralmms', fn: scrapeViralMms },
-      { key: 'desisexvdo', fn: scrapeDesiSexVdo },
-      { key: 'desibabe', fn: scrapeDesiBabe },
-      { key: 'desihub', fn: scrapeDesiHub },
-      { key: 'desibf', fn: scrapeDesiBF },
-      { key: 'desileak49', fn: scrapeDesiLeak49 },
-      { key: 'mastiraja', fn: scrapeMastiRaja }
-    ];
-
     let totalSent = 0;
     let totalFailed = 0;
 
     for (const user of enabledUsers) {
       try {
-        // Get user's groups (would need to be stored in kv-storage)
-        // For now, assume user has groups in user.groups array
         const userGroups = user.groups || [];
-        
         for (const group of userGroups) {
-          if (!group.chatId || !group.topics) continue;
-          
-          // Get group's forum topics
-          let topics = [];
-          try {
-            topics = await bot.telegram.getForumTopics(group.chatId);
-          } catch (e) {
-            console.error(`Failed to get topics for group ${group.chatId}:`, e.message);
+          if (!group.chatId) continue;
+
+          // Prefer stored topics (name + message_thread_id)
+          let topics = Array.isArray(group.topics) ? group.topics.filter(t => t.name && t.message_thread_id) : [];
+
+          if (topics.length === 0) {
+            console.log(`No topics configured for group ${group.chatId} — skip (use /settopic)`);
             continue;
           }
-          
-          // Scrape each site and match to topics
-          for (const site of sites) {
+
+          for (const topic of topics) {
+            const tagName = topic.name;
+            console.log(`Topic "${tagName}" thread ${topic.message_thread_id} — scraping by tag`);
             try {
-              const posts = await site.fn(1, 5).catch(() => []);
-              if (!posts.length) continue;
-              
-              for (const topic of topics) {
-                const matchedTag = matchTopicToTags(topic.name, site.key);
-                if (!matchedTag) continue;
-                
-                // Loose match: if topic matches site tags, send top posts (no title filter)
-                const matchedPosts = posts.slice(0, 3); // Max 3 per topic per site
-                
-                for (const post of matchedPosts) {
-                  const sent = await sendVideoToTopic(bot, group.chatId, topic.message_thread_id, post, site.key);
-                  if (sent) totalSent++;
-                  else totalFailed++;
-                  
-                  // Rate limit
-                  await new Promise(r => setTimeout(r, 500));
-                }
+              const posts = await scrapeByTag(tagName, 3);
+              if (!posts.length) {
+                console.log(`  no posts for tag ${tagName}`);
+                continue;
+              }
+              // max 3 per topic per run
+              for (const post of posts.slice(0, 3)) {
+                const ok = await sendPostToTopic(
+                  bot,
+                  group.chatId,
+                  topic.message_thread_id,
+                  post,
+                  tagName
+                );
+                if (ok) totalSent++;
+                else totalFailed++;
+                await new Promise(r => setTimeout(r, 800));
               }
             } catch (err) {
-              console.error(`Error scraping ${site.key}:`, err.message);
+              console.error(`Topic ${tagName} error:`, err.message);
             }
           }
         }

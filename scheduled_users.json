@@ -12,7 +12,10 @@
       "desibabe",
       "desibf",
       "desileak49",
-      "mastiraja"
+      "mastiraja",
+      "latestdesimms",
+      "mmsgram",
+      "indianporn365"
     ],
     "groupTopics": true,
     "forceChannel": null,
@@ -20,7 +23,12 @@
     "groups": [
       {
         "chatId": "-1004201061752",
-        "topics": []
+        "topics": [
+          { "name": "Tamil", "message_thread_id": 35 },
+          { "name": "Mallu", "message_thread_id": 43 },
+          { "name": "Muslim", "message_thread_id": 45 },
+          { "name": "18+", "message_thread_id": 46 }
+        ]
       }
     ]
   }

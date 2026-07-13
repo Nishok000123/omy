@@ -168,7 +168,7 @@ export async function getScheduledUsers() {
 export async function addScheduledUser(userId, chatId, options = {}) {
   const users = await getScheduledUsers();
   if (users.find(u => u.userId === String(userId))) return false;
-  const allSites = ['desiporn', 'mmsbee', 'desipapa', 'hotpic', 'viralmms', 'desisexvdo', 'desibabe', 'desihub', 'desibf', 'desileak49', 'mastiraja'];
+  const allSites = ['desiporn', 'mmsbee', 'desipapa', 'hotpic', 'viralmms', 'desisexvdo', 'desibabe', 'desihub', 'desibf', 'desileak49', 'mastiraja', 'latestdesimms', 'mmsgram', 'indianporn365'];
   users.push({
     userId: String(userId),
     chatId: String(chatId),
@@ -230,6 +230,53 @@ export async function updateScheduledUserForceChannel(userId, forceChannel) {
   const user = users.find(u => u.userId === String(userId));
   if (!user) return false;
   user.forceChannel = forceChannel;
+  await writeJsonBlobAndLocal('/scheduled_users.json', SCHEDULED_USERS_FILE, users);
+  return true;
+}
+
+export async function updateScheduledUserGroups(userId, groups) {
+  let users = await getScheduledUsers();
+  const user = users.find(u => u.userId === String(userId));
+  if (!user) return false;
+  user.groups = groups;
+  await writeJsonBlobAndLocal('/scheduled_users.json', SCHEDULED_USERS_FILE, users);
+  return true;
+}
+
+/** Register / update a forum topic mapping for a user's group */
+export async function upsertScheduledUserTopic(userId, chatId, topic) {
+  let users = await getScheduledUsers();
+  let user = users.find(u => u.userId === String(userId));
+  if (!user) {
+    // create minimal scheduled user
+    users.push({
+      userId: String(userId),
+      chatId: String(chatId),
+      time: '09:00',
+      timezone: 'Asia/Kolkata',
+      enabled: true,
+      sites: [],
+      groupTopics: true,
+      forceChannel: null,
+      groups: [],
+      addedAt: new Date().toISOString()
+    });
+    user = users[users.length - 1];
+  }
+  if (!user.groups) user.groups = [];
+  let group = user.groups.find(g => String(g.chatId) === String(chatId));
+  if (!group) {
+    group = { chatId: String(chatId), topics: [] };
+    user.groups.push(group);
+  }
+  if (!group.topics) group.topics = [];
+  const idx = group.topics.findIndex(
+    t => String(t.message_thread_id) === String(topic.message_thread_id) ||
+         t.name.toLowerCase() === String(topic.name).toLowerCase()
+  );
+  if (idx >= 0) group.topics[idx] = { ...group.topics[idx], ...topic };
+  else group.topics.push(topic);
+  user.groupTopics = true;
   await writeJsonBlobAndLocal('/scheduled_users.json', SCHEDULED_USERS_FILE, users);
   return true;
 }
