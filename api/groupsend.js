@@ -156,11 +156,8 @@ export default async function handler(req, res) {
                 const matchedTag = matchTopicToTags(topic.name, site.key);
                 if (!matchedTag) continue;
                 
-                // Filter posts by tag
-                const matchedPosts = posts.filter(p => {
-                  const titleLower = (p.title || '').toLowerCase();
-                  return titleLower.includes(matchedTag.toLowerCase());
-                }).slice(0, 3); // Max 3 per topic per site
+                // Loose match: if topic matches site tags, send top posts (no title filter)
+                const matchedPosts = posts.slice(0, 3); // Max 3 per topic per site
                 
                 for (const post of matchedPosts) {
                   const sent = await sendVideoToTopic(bot, group.chatId, topic.message_thread_id, post, site.key);
