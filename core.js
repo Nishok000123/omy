@@ -1441,6 +1441,32 @@ bot.command('groupinfo', async (ctx) => {
   await ctx.replyWithMarkdown(response).catch(() => {});
 });
 
+// ─── /topicinfo command — get forum topic thread ID ───────────────────────────
+bot.command('topicinfo', async (ctx) => {
+  const chatId = ctx.chat.id;
+  const threadId = ctx.message.message_thread_id;
+  
+  if (!threadId) {
+    return ctx.reply(
+      '❌ This command only works in forum topic threads.\n\n' +
+      '💡 Use it INSIDE a specific topic (like your Tamil topic) to get the thread ID needed for auto-send.'
+    ).catch(() => {});
+  }
+  
+  // Success - we have a thread ID
+  let response = `📍 *Forum Topic Thread Info*\n\n`;
+  response += `🆔 *Chat ID*: \`${chatId}\`\n`;
+  response += `🧵 *Thread ID*: \`${threadId}\`\n\n`;
+  response += `✅ This is the info needed for group topics auto-send!\n\n`;
+  response += `**Next Steps:**\n`;
+  response += `1. Copy both IDs above\n`;
+  response += `2. Tell me: "chatId: ${chatId}, threadId: ${threadId}"\n`;
+  response += `3. I'll update your config to send to this topic\n`;
+  response += `4. Bot will auto-send matching content to this topic every 6 hours`;
+  
+  await ctx.replyWithMarkdown(response).catch(() => {});
+});
+
 // ─── Save / Unsave handlers ───────────────────────────────────────────────────
 bot.action(/^save_(v\d+)$/, async (ctx) => {
   const saveId = ctx.match[1];
